@@ -1,0 +1,11 @@
+clienthost = 'test.host.com'
+port = 8069
+basedir = "/tmp"
+baksubdir = 'canonical'
+htmlsubdir = 'browse'
+urlize = 'file://localhost/tmp'
+logfile = '/tmp/itc.log'
+dirpath = "itest_dir"
+path = "itest_data_domains"
+checksum = "607981152d3fd062e5a6a6940c3e4476"
+length = 140

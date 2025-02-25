@@ -1,0 +1,56 @@
+#!/bin/bash
+# chkconfig: 2345 95 20
+# description: pybakd
+# pybak deamon
+# processname: pybakd
+#
+#	/etc/rc.d/init.d/pybakd
+#
+# <tags -- see below for tag definitions.  *Every line* from the top
+#  of the file to the end of the tags section must begin with a #
+#  character.  After the tags section, there should be a blank line.
+#  This keeps normal comments in the rest of the file from being
+#  mistaken for tags, should they happen to fit the pattern.>
+
+# Source function library.
+# apparently this only exists on centos:
+if [ -e /etc/init.d/functions ]; then
+   . /etc/init.d/functions
+fi
+
+start() {
+	echo "Starting pybakd: "
+	pushd /home/pybak/Bin/Pybak
+	(./pybakd.py )&
+	popd
+	touch /var/lock/subsys/pybakd
+	return 0
+}	
+
+stop() {
+	echo "Shutting down pybakd: "
+	ps aux | grep pybakd.py | grep python | grep -v grep | awk '{print $2}' | xargs kill
+	rm -f /var/lock/subsys/pybakd
+	return 0
+}
+
+case "$1" in
+    start)
+	start
+	;;
+    stop)
+	stop
+	;;
+    status)
+    	ps ux | grep pybakd.py
+	;;
+    restart)
+    	stop
+	start
+	;;
+    *)
+	echo "Usage: pybakd {start|stop|status|restart}"
+	exit 1
+	;;
+esac
+exit $?

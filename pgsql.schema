@@ -1,0 +1,96 @@
+DROP DATABASE IF EXISTS pybak;
+DROP DATABASE IF EXISTS pybakdb;
+DROP DATABASE IF EXISTS pybakdb2;
+CREATE DATABASE pybakdb WITH OWNER=pybak ENCODING='UTF8' TEMPLATE=template0;
+\c pybakdb
+DROP SCHEMA IF EXISTS schema1 CASCADE;
+DROP SCHEMA IF EXISTS public CASCADE;
+CREATE SCHEMA public;
+SET search_path TO "$user",public;
+
+-- canonical name: from an md5 sum & a length.
+
+CREATE TABLE canonical (
+    id SERIAL UNIQUE,
+    sum character varying(32),
+    len character varying(64) NOT NULL,
+    PRIMARY KEY( sum, len )
+);
+
+-- text encoding.
+
+CREATE TABLE encoding (
+    id SERIAL UNIQUE,
+    encoding character varying(128) NOT NULL,
+    PRIMARY KEY( encoding )
+);
+
+CREATE TABLE encodedName (
+    id SERIAL UNIQUE,
+    encodingid integer NOT NULL REFERENCES encoding(id),
+    name bytea NOT NULL,
+    PRIMARY KEY( encodingid, name )
+);
+
+-- host entries: dirs, files.
+
+-- note: rfc spec for hostnames says they are safely ascii.
+CREATE TABLE host (
+    id SERIAL UNIQUE,
+    host character varying(512) NOT NULL,
+    PRIMARY KEY( host )
+);
+CREATE TABLE dir (
+    id SERIAL UNIQUE,
+    parentid integer REFERENCES dir(id), -- if null then we are a root dir.
+    name integer NOT NULL REFERENCES encodedName(id),
+    PRIMARY KEY( parentid, name )
+);
+CREATE TABLE file (
+    id SERIAL UNIQUE,
+    dirid integer NOT NULL REFERENCES dir(id),
+    name integer NOT NULL REFERENCES encodedName(id),
+    PRIMARY KEY( dirid, name )
+);
+CREATE TABLE hostid_x_fileid (
+    id serial UNIQUE,
+    hostid integer NOT NULL REFERENCES host(id),
+    fileid integer NOT NULL REFERENCES file(id),
+    PRIMARY KEY( hostid, fileid )
+);
+CREATE TABLE canonicalid_x_hostidxfileid (
+    canonicalid integer NOT NULL REFERENCES canonical(id),
+    hostidxfileid integer NOT NULL REFERENCES hostid_x_fileid(id),
+    PRIMARY KEY( canonicalid, hostidxfileid )
+);
+
+-- mime-type.
+
+CREATE TABLE mimeType (
+    id SERIAL UNIQUE,
+    mimeType character varying(128) NOT NULL,
+    PRIMARY KEY( mimeType )
+);
+CREATE TABLE canonicalid_x_mimetypeid (
+    canonicalid integer NOT NULL REFERENCES canonical(id),
+    mimetypeid integer NOT NULL REFERENCES mimetype(id),
+    PRIMARY KEY( canonicalid, mimetypeid )
+);
+
+-- timestamps.
+
+-- it is a python time format at the moment. see dbize.py.
+CREATE TABLE timeStamp (
+    id SERIAL UNIQUE,
+    timeStamp character varying(256) NOT NULL,
+    PRIMARY KEY( timeStamp )
+);
+CREATE TABLE canonicalid_x_timeStampid (
+    canonicalid integer NOT NULL REFERENCES canonical(id),
+    timeStampid integer NOT NULL REFERENCES timeStamp(id),
+    PRIMARY KEY( canonicalid, timeStampid )
+);
+
+---------- permissions ----------
+
+GRANT ALL ON ALL TABLES IN SCHEMA public TO PUBLIC;

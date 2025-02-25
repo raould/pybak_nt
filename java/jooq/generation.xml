@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<configuration xmlns="http://www.jooq.org/xsd/jooq-codegen-3.2.0.xsd">
+  <!-- Configure the database connection here -->
+  <jdbc>
+    <driver>org.postgresql.Driver</driver>
+    <url>jdbc:postgresql://192.168.123.65/pybakdb</url>
+    <user>pybak</user>
+    <password>kabyp</password>
+    <schema>public</schema>
+  </jdbc>
+
+  <generator>
+    <name>org.jooq.util.DefaultGenerator</name>
+
+    <database>
+      <name>org.jooq.util.postgres.PostgresDatabase</name>
+      <inputSchema></inputSchema>
+      <includes>.*</includes>
+      <excludes></excludes>
+    </database>
+
+    <target>
+      <packageName>com.psync_o_pathics.db.tables</packageName>
+      <directory>gen</directory>
+    </target>
+  </generator>
+</configuration>

@@ -1,0 +1,437 @@
+#!/usr/bin/env python
+
+# use like:
+#  ./buildhtml.py /var/www/html/jces/tmp http://www.monad.com/jces/tmp pybak browse,
+# then the urls inside generated htmls will be like:
+#  http://www.monad.com/jces/tmp/browse/...
+# and
+#  http://www.monad.com/jces/tmp/pybak/...
+
+import sys
+import traceback
+import os
+import os.path
+import re
+import stat
+import shutil
+import re
+import util
+import metadata
+import urlfix
+import visit_core
+import exts
+import Image
+import ImageDraw
+import ImageFont
+import font
+from datetime import datetime
+
+g_font = None
+g_sheet_htmlt = """<html>
+<body>
+<!-- title --><br>
+<!-- mark -->
+<!-- mark -->
+</body>
+</html>
+"""
+
+def get_html_parent_path( base, dst_root, host, host_path ):
+    host_safe = re.sub( "/", "_", host )
+    host_path_safe = util.get_unrooted_path( host_path )
+    p = os.path.join(
+        base,
+        dst_root,
+        host_safe,
+        os.path.dirname( host_path_safe ) )
+    return p
+
+def ensure_dir_path( base, dst_root, host, host_path ):
+    path = get_html_parent_path( base, dst_root, host, host_path )
+    util.ensure_path( path )
+
+def get_sym_path( path ):
+    pdir, file = os.path.split( path )
+    sym_path = os.path.join( pdir, ".syms", file )
+    return sym_path
+
+def build_aka( base, dst_root, urlize, host, host_path, html_path, md ):
+    aka = []
+    for h in md:
+        for p in md[h]:
+            # don't repeat the currently-generating html thing as an aka.
+            skip = host == h and host_path == p
+            if not skip:
+                aka_html_path = get_html_path( base, dst_root, h, p )
+                url = to_urlized( base, urlize, aka_html_path )
+                aka.append( '%s: <a href="%s">%s</a><br>' % ( h, urlfix.fix(url), p ) )
+    aka.sort()
+    return aka
+
+def to_urlized( base, urlize, path ):
+    urlized = re.sub( "^" + base, urlize, path )
+    #visit_core.log( "[buildhtml] to_urlized( %s ): %s\n" % ( ", ".join( map( lambda e: str(e), [base, urlize, path] ) ), urlized ), True )
+    return urlized
+
+def get_html_path( base, dst_root, host, host_path ):
+    import re
+    hostname = os.path.basename( host_path )
+    hostname = re.sub( "\.", "_", hostname )
+    hp_base = os.path.basename( host_path )
+    if hp_base and hp_base != "":
+        hp_base += ".html"
+    html_path = os.path.join(
+        base,
+        get_html_parent_path( base, dst_root, host, host_path ),
+        hp_base,
+        )
+    return html_path
+
+def get_html_filename( html_path ):
+    f = os.path.basename( html_path )
+    return f
+
+def get_html_nameorig( html_path ):
+    f = get_html_filename( html_path )
+    f = f.replace( ".html", "", 1 )
+    return f
+
+def get_html_pathorig( html_path ):
+    p = html_path.replace( ".html", "", 1 )
+    return p
+
+def build_breadcrumbs( base, dst_root, urlize, host, host_path ):
+    import urlparse
+    bs = []
+    preslash = os.path.sep if host_path.startswith( os.path.sep ) else ''
+    href_prefix = get_html_path( base, dst_root, host, '' )
+    #visit_core.log( "-- %s\n" % href_prefix )
+    path_list = util.path_to_list( host_path ) # e.g. /a/b/c -> [a,b,c] where a,b are dirs, c is file.
+    #visit_core.log( " -- %s\n" % path_list )
+    for i in range( 0, len(path_list)-1 ):
+        #visit_core.log( "[buildhtml] build_breadcrumbs(): i=%s path_list=%s bs=%s\n" % ( i, path_list, bs ) )
+        cursor = os.path.join( *path_list[0:i+1] )
+        a_href = to_urlized( base, urlize, os.path.join( href_prefix, cursor ) )
+        a_txt = path_list[i]
+        #visit_core.log( "[buildhtml] build_breadcrumbs(): cursor=%s a_href=%s a_txt=%s\n" % ( cursor, a_href, a_txt ) )
+        bs.append( '\n<a href="%s">%s</a>' % ( urlfix.fix(a_href), a_txt ) )
+        #visit_core.log( "[buildhtml] build_breadcrumbs(): bs = %s\n" % bs )
+    #visit_core.log( "[buildhtml] build_breadcrumbs(): bs final = %s\n" % bs )
+    bcs = host + ": " + preslash + "/".join( bs ) + "\n"
+    #visit_core.log( "[buildhtml] build_breadcrumbs( %s )\n" % bcs )
+    return bcs
+
+def get_thumbnail_path( base, dst_root, sum_path ):
+    #visit_core.log( "[buildhtml] get_thumbnail_path( %s, %s, %s )\n" % ( base, dst_root, sum_path ) )
+    thumb_path = os.path.join(
+        base,
+        dst_root,
+        ".thumbs",
+        util.get_data_path_mids( util.get_checksum_from_path( sum_path ) ),
+        os.path.basename( sum_path )
+        ) + "_thumb.jpg"
+    #visit_core.log( "[buildhtml] get_thumbnail_path(): %s\n" % thumb_path )
+    return thumb_path
+
+def write_thumbnail( base, urlize, sum_path, html_path, thumb_path ):
+    #visit_core.log( "write_thumbnail(): %s\n" % locals() )
+    orig_path = get_html_pathorig( html_path )
+    try:
+        i = Image.open( sum_path )
+        i.thumbnail( (128, 128), Image.ANTIALIAS )
+        i = i.convert( 'RGB' )
+
+        if "." in orig_path:
+            ext = orig_path.split(".")[-1]
+            draw = ImageDraw.Draw( i )
+            (tw,th) = draw.textsize( ext, font=g_font )
+            (iw,ih) = i.size
+            tx = iw - tw - 5
+            ty = ih - th - 5
+            draw.rectangle( (tx,ty,tx+tw+5,ty+th+5), fill="black" )
+            draw.text( (tx+1,ty+1), ext, fill="white", font=g_font )
+
+        util.ensure_parent_path( thumb_path )
+        if os.path.exists( thumb_path ):
+            os.remove( thumb_path )
+        i.save( thumb_path, "JPEG" )
+
+        sym_path = get_sym_path( orig_path )
+        alias_url = to_urlized( base, urlize, sym_path )
+        thumb_url = to_urlized( base, urlize, thumb_path )
+        #visit_core.log( "[buildhtml] write_thumbnail(): %s %s\n" % ( alias_url, thumb_url ) )
+        return alias_url, thumb_url
+    except:
+        ex = sys.exc_info()
+        if (not ("cannot identify" in str(ex[1]))):
+            # too verbose.
+            #visit_core.log( "[buildhtml] write_thumbnail(): sum_path=%s, html_path=%s, ex = %s, %s\n" % (sum_path, html_path, ex, traceback.format_exception(*ex)) )
+            pass
+        return None, None
+
+def build_thumbnail( base, dst_root, urlize, sum_path, html_path ):
+    #visit_core.log( "build_thumbnail(): %s\n" % locals() );
+    thumb_path = get_thumbnail_path( base, dst_root, sum_path )
+    return write_thumbnail( base, urlize, sum_path, html_path, thumb_path )
+
+def build_name_link( base, urlize, sum_path, html_path ):
+    sym_path = get_sym_path( get_html_pathorig(html_path) )
+    if not os.path.exists( sym_path ):
+        util.ensure_parent_path( sym_path )
+        os.symlink( sum_path, sym_path )
+    href = to_urlized( base, urlize, sym_path )
+    l = '<a href="%s">%s</a>' % ( urlfix.fix(href), os.path.basename( sym_path ) )
+    #visit_core.log( "[buildhtml] build_name_link( %s ): %s %s\n" % ( ", ".join( map( lambda e: str(e), [base, urlize, sum_path, html_path] ) ), sym_path, l ) )
+    return l
+
+def write_by_ext( base, dst_root, sum_path, host, host_path, md, dry_run, over_write ):
+    try:
+        write_by_ext_throws( base, dst_root, sum_path, host, host_path, md, dry_run, over_write )
+    except:
+        visit_core.log_error( traceback.format_exception(*sys.exc_info()) )
+        visit_core.log_error( ", ".join( [ sum_path, host, host_path ] ) )
+
+def write_by_ext_throws( base, dst_root, sum_path, host, host_path, md, dry_run, over_write ):
+    ext = util.get_extension( host_path )
+    if (not dry_run) and (ext in exts.exts):
+        csum = util.get_checksum_from_path( sum_path )
+        sum_basename = os.path.basename( sum_path )
+        xdir = os.path.join( dst_root, "by_extension", ext, util.get_data_path_mids(csum), sum_basename)
+        util.ensure_path( xdir )
+        ext_path = os.path.join( xdir, os.path.basename(host_path) )
+        if os.path.exists( ext_path ) and over_write:
+            os.remove( ext_path )
+        if not os.path.exists( ext_path ):
+            # TODO: it would be better to write a new html file that only lists all akas.
+            html_path = get_html_path( base, dst_root, host, host_path )
+            os.symlink( html_path, ext_path )
+        return True
+    return False
+
+def write_image_by_date( base, dst_root, sum_path, host, host_path, md, dry_run, over_write, thumb_img_url ):
+    try:
+        write_image_by_date_throws( base, dst_root, sum_path, host, host_path, md, dry_run, over_write, thumb_img_url )
+    except:
+        visit_core.log_error( traceback.format_exception(*sys.exc_info()) )
+        visit_core.log_error( ", ".join( [ sum_path, host, host_path ] ) )
+
+def write_image_by_date_throws( base, dst_root, sum_path, host, host_path, md, dry_run, over_write, thumb_img_url ):
+    oldest_date = metadata.get_oldest( md )
+    if (not dry_run) and (oldest_date != None):
+        # heck only knows if this date stuff is right; i hate python.
+        dt = datetime.utcfromtimestamp( oldest_date )
+        path = os.path.join( dst_root, "image_by_date", str(dt.year), str(dt.month), str(dt.day) )
+        util.ensure_path( path )
+        # todo: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # write into thumbnail sheet for day.
+        # write into thumbnail sheet for month.
+        # don't write for year! too many images!
+        return True
+    return False
+
+def write_html( base, dst_root, urlize, sum_path, host, host_path, md, html_path, dry_run, over_write, thumb_alias_url, thumb_img_url ):
+    try:
+        host_path = util.make_safelength_path( host_path )
+        write_html_throws( base, dst_root, urlize, sum_path, host, host_path, md, html_path, dry_run, over_write, thumb_alias_url, thumb_img_url )
+    except:
+        visit_core.log_error( traceback.format_exception(*sys.exc_info()) )
+        visit_core.log_error( ", ".join( [ sum_path, host, host_path ] ) )
+
+def write_html_throws( base, dst_root, urlize, sum_path, host, host_path, md, html_path, dry_run, over_write, thumb_alias_url, thumb_img_url ):
+    #visit_core.log( "[buildhtml] write_html_throws(): %s\n" % html_path )
+    do_write = over_write or (not os.path.exists( html_path ))
+    if (not dry_run) and do_write:
+        breadcrumbs = build_breadcrumbs( base, dst_root, urlize, host, host_path )
+        name_link = build_name_link( base, urlize, sum_path, html_path )
+        human_length = util.to_named_size( util.get_length_from_path( sum_path ) )
+        sum_url = to_urlized( base, urlize, sum_path )
+        aka = build_aka( base, dst_root, urlize, host, host_path, html_path, md )
+
+        # some day worry about the other mime types as well.
+        mime_types = metadata.guess_mime_types( md )
+        if mime_types != None:
+            mime_type = 'type="%s"' % mime_types[0]
+        else:
+            mime_type = 'type=unknown'
+
+        if os.path.exists( html_path ):
+            os.remove( html_path )
+        f = open( html_path, 'w' )
+        f.write( '<html><body>\n' )
+        f.write( '<table>\n' )
+        f.write( '<tr><td align="right">Path:</td>\n<td>%s</td></tr>\n' % breadcrumbs )
+        f.write( '<tr><td align="right">Name:</td>\n<td>%s</td></tr>\n' % name_link )
+
+        if thumb_alias_url and thumb_img_url:
+            f.write( '<tr><td colspan="2"><a href="%s"><img src="%s"></a></td></tr>\n' % ( urlfix.fix(thumb_alias_url), urlfix.fix(thumb_img_url) ) )
+
+        f.write( '<tr><td align="right">Size:</td>\n<td>%s</td></tr>\n' % human_length )
+        f.write( '<tr><td align="right">Canonical:</td>\n<td><a id="canonical" %s href="%s">%s</a></td></tr>\n' % ( mime_type, urlfix.fix(sum_url), os.path.basename(sum_path) ) )
+
+        if aka:
+            aka_str = '<tr><td align="right">AKA:</td><td></td></tr>\n' + \
+                        '\n'.join( map( lambda a: '<tr><td></td><td>%s</td></tr>\n' % a, aka ) )
+            aka_str = aka_str.replace( '<td></td></tr>\n<tr><td></td>', '', 1 )
+            f.write( aka_str )
+
+        f.write( '</table>\n' )
+        f.write( '\n<body><html>\n' )
+        f.close()
+
+        os.chmod( html_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH )
+        update_sheet( base, dst_root, urlize, html_path, sum_path, thumb_img_url )
+    #visit_core.log( "%s -> %s\n" % ( html_path, sum_path ) )
+
+def update_sheet( base, dst_root, urlize, html_path, sum_path, thumb_img_url ):
+    #visit_core.log( "update_sheet %s\n" % locals() )
+    if thumb_img_url:
+
+        # a (kinda stupid) name to make it show up first in the apache directory listings.
+        sheet_path = os.path.join( os.path.dirname( html_path ), "000_thumbnails.html" )
+
+        # "sheet" is less clear i than "thumbnails" i think so rename them.
+        old_sheet_path = os.path.join( os.path.dirname( html_path ), "000_sheet.html" )
+        if os.path.exists( old_sheet_path ):
+            shutil.move( old_sheet_path, sheet_path )
+
+        ensure_sheet( base, dst_root, sheet_path )
+        insert_into_sheet( base, urlize, sheet_path, html_path, thumb_img_url )
+
+def ensure_sheet( base, dst_root, sheet_path ):
+    #visit_core.log( "ensure_sheet %s\n" % locals() )
+    util.ensure_parent_path( sheet_path )
+    write_sheet( base, dst_root, sheet_path )
+
+def write_sheet( base, dst_root, sheet_path ):
+    #visit_core.log( "write_sheet %s\n" % locals() )
+    if not os.path.exists( sheet_path ):
+        title = os.path.dirname( sheet_path )
+        title = title.replace( os.path.join( base, dst_root ), '', 1 )
+        html = g_sheet_htmlt
+        html = re.sub( "<!-- title -->", title, html, 1 )
+        f = open( sheet_path, "w" )
+        f.write( html )
+        f.close()
+
+def insert_into_sheet( base, urlize, sheet_path, html_path, thumb_img_url ):
+    #visit_core.log( "insert_into_sheet %s\n" % locals() )
+    f = open( sheet_path, "r" )
+    html = "".join( f.readlines() )
+    f.close()
+    html = insert_into_sheet_html( base, urlize, html, html_path, thumb_img_url )
+    f = open( sheet_path, "w" )
+    f.write( html )
+    f.close()
+
+def insert_into_sheet_html( base, urlize, html, html_path, thumb_img_url ):
+    #visit_core.log( "insert_into_sheet_html %s\n" % locals() )
+    html_url = to_urlized( base, urlize, html_path )
+    pre, mid, post = re.split( "<!-- mark -->\n", html )
+    l = re.split( "\n", mid )
+    orig_name = get_html_nameorig(html_url)
+    line = '<!-- %s -->'			% orig_name +\
+           '<a href="%s">'			% urlfix.fix(html_url) +\
+           '<img src="%s"></a>'			% urlfix.fix(thumb_img_url)
+    #visit_core.log( "[buildhtml] insert_into_sheet_html(): %s\n" % line )
+    l.append( line )
+    l.sort()
+    u = util.uniq( l )
+    bulky = pre + "<!-- mark -->\n" + "\n".join( u ) + "\n<!-- mark -->\n" + post
+    hacked = re.sub( "\n+", "\n", bulky )
+    return hacked
+
+def build_html( base, dst_root, urlize, sum_path, md, dry_run, over_write, images_only ):
+    #visit_core.log( "[buildhtml] build_html( %s )\n" % ", ".join( map( lambda e: str(e), [base, dst_root, urlize, sum_path, md, dry_run, over_write] ) ) )
+    for host in md:
+        for host_path in md[host]:
+            thumb_alias_url, thumb_img_url = (None, None)
+            html_path = get_html_path( base, dst_root, host, host_path )
+
+            if not dry_run:
+                ensure_dir_path( base, dst_root, host, host_path )
+                thumb_alias_url, thumb_img_url = build_thumbnail( base, dst_root, urlize, sum_path, html_path )
+
+            do_write = (not images_only) or (images_only and thumb_alias_url and thumb_img_url)
+            visit_core.log( "[buildhtml] %s\n" % ", ".join( map( lambda e: str(e), [host_path, html_path, images_only, thumb_alias_url, thumb_img_url, do_write] ) ) )
+            if do_write:
+                write_html( base, dst_root, urlize, sum_path, host, host_path, md, html_path, dry_run, over_write, thumb_alias_url, thumb_img_url )
+                write_by_ext( base, dst_root, sum_path, host, host_path, md, dry_run, over_write )
+                if (thumb_alias_url != None) and (thumb_img_url != None):
+                    write_image_by_date( base, dst_root, sum_path, host, host_path, md, dry_run, over_write, thumb_img_url )
+
+# ----------------------------------------
+
+def test_get_html_parent_path():
+    p = get_html_parent_path( "base", "dst_root", "host", "path1/path2/file" )
+    assert p == "base/dst_root/host/path1/path2", p
+
+def test_ensure_dir_path():
+    if os.path.exists( "/tmp/foobar" ):
+        shutil.rmtree( "/tmp/foobar" )
+    ensure_dir_path( "/tmp/foobar", "dst", "test.example.com", "1/2/3/origname" )
+    assert os.path.exists( "/tmp/foobar/dst/test.example.com/1/2/3/" )
+
+def test_ensure_dir_path_hostsafe():
+    if os.path.exists( "/tmp/foobar" ):
+        shutil.rmtree( "/tmp/foobar" )
+    ensure_dir_path( "/tmp/foobar", "dst", "test/example/com", "1/2/3/origname" )
+    assert os.path.exists( "/tmp/foobar/dst/test_example_com/1/2/3/" )
+
+def test_build_html_createsdirs():
+    if os.path.exists( "/tmp/foobar" ):
+        shutil.rmtree( "/tmp/foobar" )
+    os.makedirs( "/tmp/foobar/src" )
+    shutil.copyfile( "itest_data_full", "/tmp/foobar/src/itest_data_full" )
+    build_html( "/tmp/foobar", "dst", "http://foo.bar", "/tmp/foobar/src/itest_data_full", { 'host.1.com': { '1/2/3/A': 100 }, 'host.2.com': { '1/2/3/B': 200 } }, False, False, False )
+    assert os.path.exists( "/tmp/foobar/dst/host.1.com/1/2/3/" )
+    assert os.path.exists( "/tmp/foobar/dst/host.2.com/1/2/3/" )
+
+def test_get_sym_path():
+    s = get_sym_path( "/var/www/html/jces/tmp/pybak/openvz.monad.com/vz/storage/Ian/UploadedIThink/SleepingJuly2010/IMG_2010.JPG" )
+    expected = "/var/www/html/jces/tmp/pybak/openvz.monad.com/vz/storage/Ian/UploadedIThink/SleepingJuly2010/.syms/IMG_2010.JPG"
+    assert s == expected, s
+
+def test():
+    test_get_sym_path()
+    test_get_html_parent_path()
+    test_ensure_dir_path()
+    test_ensure_dir_path_hostsafe()
+    test_build_html_createsdirs()
+
+def usage(msg=None):
+    if msg:
+        visit_core.log_error("[%s]\n" % msg)
+    visit_core.log_error( "usage: %s {--dryrun} {--overwrite} {--maxdepth N} <root> <root_url> <(root)/canonical> <(root)/browse>\n" % sys.argv[0] )
+    sys.exit(1)
+    
+if __name__ == '__main__':
+    if util.eat_arg( sys.argv, "test" ):
+        test()
+    else:
+        try:
+            dm = visit_core.main_helper( usage )
+            dry_run = dm['dry_run']
+            max_depth = dm['max_depth']
+            # todo: seems like these should be supported via main_helper instead.
+            over_write = util.eat_arg( sys.argv, "overwrite", remove=True )
+            images_only = util.eat_arg( sys.argv, "images_only", remove=True )
+            g_font = font.get_font()
+            root = os.path.abspath( sys.argv[1] )
+            urlize = sys.argv[2]
+            canonical = sys.argv[3]
+            browse = sys.argv[4]
+            canonical_root = os.path.join( root, canonical )
+            browse_root = os.path.join( root, browse )
+        except:
+            usage(msg="args: %s" % traceback.format_exception(*sys.exc_info()))
+
+        def visit_single( file_count, full_path, data ):
+            visit_core.log( "%s %s\n" % ( file_count, full_path ) )
+            if os.path.isfile( full_path ) and util.smells_like_canonical( full_path ):
+                md = metadata.fix_mistakes( metadata.read_json_path( util.data_to_json_metadata_path( full_path ) ) )
+                build_html( root, browse_root, urlize, full_path, md, dry_run, over_write, images_only )
+
+        try:
+            visit_core.visit( canonical_root, max_depth, visit_single )
+        except:
+            usage(msg="run: %s" % traceback.format_exception(*sys.exc_info()))

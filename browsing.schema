@@ -1,0 +1,45 @@
+\c pybakdb
+SET search_path TO "$user",public;
+
+---------- support for browsing (denormalization) ----------
+
+CREATE TABLE b_hostPath (
+	id SERIAL UNIQUE,
+	hostid integer NOT NULL REFERENCES host(id),
+	b_pathid integer NOT NULL REFERENCES b_path(id),
+	PRIMARY KEY( hostid, b_pathid )
+);
+
+CREATE TABLE b_file (
+	   id SERIAL UNIQUE,
+	   dirid integer NOT NULL REFERENCES b_hostPath(id),
+	   nameid integer NOT NULL REFERENCES b_name(id),
+	   PRIMARY KEY( parentid, nameid )
+);
+
+CREATE TABLE b_dir (
+	   id SERIAL UNIQUE,
+	   parentid integer NOT NULL REFERENCES b_hostPath(id),
+	   pathid integer NOT NULL REFERENCES b_hostPath(id),
+	   PRIMARY KEY( parentid, pathid )
+);
+
+CREATE TABLE cnameid_x_b_hostPathFileid (
+	   cnameid integer NOT NULL REFERENCES cname(id),
+	   b_hostPathFileid integer NOT NULL REFERENCES b_hostPathFile(id),
+	   PRIMARY KEY( cnameid, b_hostPathFileid )
+);
+
+---------- jpeg thumbnails ----------
+
+CREATE TABLE thumbnail (
+       id SERIAL UNIQUE,
+       cnameid integer UNIQUE NOT NULL REFERENCES cname(id),
+       jpeg BYTEA,
+       PRIMARY KEY( cnameid )
+);
+CREATE UNIQUE INDEX thumbnail_cnameid_idx ON thumbnail(cnameid);
+
+---------- permissions ----------
+
+GRANT ALL ON ALL TABLES IN SCHEMA public TO PUBLIC;

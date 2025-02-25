@@ -1,0 +1,165 @@
+#!/usr/bin/python
+
+# warning: there's a lot of convention going on here! see psql.schema.
+
+import sys
+import re
+import os
+import os.path
+import exts
+import mime_types
+import util
+import metadata
+import visit_core
+import upsert_parent_paths
+from bad_path_exception import *
+import traceback
+import calendar
+import pgsqlutil as pu
+#from pg8000 import DBAPI as db
+import psycopg2 as db
+
+# {'superman-laptop': {'/media/Mac/CatiMB1Backup/jon/Documents/Dev/docs/api/javax/swing/InputVerifier.html': {'oldest-timestamp': (2005, 6, 21, 3, 53, 53, 1, 172, 0), 'exe': 'False', 'last-update-sec': (2012, 9, 12, 0, 49, 28, 2, 256, 0)}, '/media/Mac/CatiMB1Backup/jon/Library/Favorites/Documents/Dev/docs/api/javax/swing/InputVerifier.html': {'oldest-timestamp': (2005, 6, 21, 3, 53, 53, 1, 172, 0), 'exe': 'False', 'last-update-sec': (2012, 9, 12, 2, 48, 50, 2, 256, 0)}}}
+
+def splitPath( path ):
+
+    # to_utf8str() relevant only if path is from db, which it once was, but not now.
+    path = pu.to_utf8str( path )
+
+    # hope this works right with whatever data we've accumulated.
+    path = os.path.normpath( path )
+
+    # some (old?) metadata didn't have canonical paths.
+    if path[0] != "/":
+        path = "/PYBAK_ORPHANS/" + path
+
+    # todo: all this probably doesn't sufficiently cover all such possible evils!
+    if "\/" in path:
+        sys.stderr.write( "can't handle path with escaped slashes: [%s]\n" % path )
+        raise BadPathException()
+    if len(path) <= 1:
+        sys.stderr.write( "can't handle short path: [%s]\n" )
+        raise BadPathException()
+    filename = os.path.basename( path )
+    dirpath = os.path.dirname( path )
+    if len(filename) == 0:
+        sys.stderr.write( "can't handle empty filename: [%s|%s]\n" % (filename, path) )
+        raise BadPathException()
+    if len(dirpath) == 0:
+        sys.stderr.write( "can't handle empty dirpath: [%s|%s]\n" % (dirpath, path) )
+        raise BadPathException()
+    return ( dirpath, filename )
+
+def upsert_canonicalid_to_other( dbcur, canonicalid, tableB, kvpsB ):
+    visit_core.log( "%s %s\n" % (tableB, kvpsB) )
+    col_nameXB = tableB + "id"
+    tableX = "canonicalid_x_" + col_nameXB
+    bid = pu.upsert_single_retid( dbcur, tableB, kvpsB )
+    pu.upsert_single_noret( dbcur, tableX, [("canonicalid",canonicalid), (col_nameXB,bid)] )
+
+def upsert_mime_type( dbcur, mt ):
+    return pu.upsert_single_retid( dbcur, "mimeType", [("mimeType",mt)] )
+
+def upsert_mime_type_name( dbcur, mt, name ):
+    mtid = upsert_mime_type( dbcur, mt )
+    return pu.upsert_single_retid( dbcur, "mimeTypedName", [("mimeTypeid",mtid),("name",db.Binary(name))] )
+
+def upsert_extension( dbcur, canonicalid, md ):
+    extension = metadata.get_extension( md )
+    if extension in exts.exts:
+        mtnid = upsert_mime_type_name( dbcur, mime_types.text_plain_utf8, extension )
+        exid = pu.upsert_single_retid( dbcur, "extension", [("extension",mtnid)] )
+        upsert_canonicalid_to_other( dbcur, canonicalid, "extension", [("extension",exid)] )
+
+def upsert_mime_types( dbcur, canonicalid, md ):
+    mime_types = metadata.guess_mime_types( md )
+    if mime_types != None:
+        for mt in mime_types:
+            mtid = upsert_mime_type( dbcur, mt )
+            upsert_canonicalid_to_other( dbcur, canonicalid, "mimeType", [("mimeType",mt)] )
+
+def upsert_oldest( dbcur, canonicalid, md ):
+    def oldest_timestamp_vfn( md, host, path, pathData, visitFnDate ):
+        last_update = pathData.get( metadata.LAST_UPDATE_SEC_KEY, None )
+        if last_update != None:
+            upsert_canonicalid_to_other( dbcur, canonicalid, "timeStamp", [("timeStamp",last_update)] )
+        oldest_timestamp = pathData.get( metadata.OLDEST_TIMESTAMP_KEY, None )
+        if oldest_timestamp != None and oldest_timestamp != last_update:
+            oldest_gmt = oldest_timestamp
+            upsert_canonicalid_to_other( dbcur, canonicalid, "timeStamp", [("timeStamp",oldest_gmt)] )
+    metadata.visit( md, oldest_timestamp_vfn, None )
+
+def upsert_canonicalid_to_hostFilePath( dbcur, canonicalid, host, path ):
+    visit_core.log( "%s %s\n" % (host, path) )
+    try:
+        (dir_path, item_name) = splitPath( path )
+        visit_core.log( "path=%s dir_path=%s item_name=%s\n" % ( path, dir_path, item_name ) )
+
+        # hid = pu.upsert_single_retid( dbcur, "host", [("host",host)] )
+        # pid = pu.upsert_single_retid( dbcur, "path", [("path",dir_path)] )
+        # fid = pu.upsert_single_retid( dbcur, "filename", [("name",item_name)] )
+        # upsert_canonicalid_to_other( dbcur, canonicalid, "file", [("hostid",hid), ("pathid",pid), ("filenameid",fid)] )
+
+    except BadPathException as bpe:
+        sys.stderr.write( str(bpe) )
+
+def upsert_hostpaths( dbcur, canonicalid, md ):
+     def hostpath_vfn( md, host, path, pathData, visitFnData ):
+         upsert_canonicalid_to_hostFilePath( dbcur, canonicalid, host, path )
+     metadata.visit( md, hostpath_vfn, None )
+
+def visit_single_md( dbconn, mdpath, md ):
+    dbcur = dbconn.cursor()
+    (csum, flen) = util.get_checksum_length_from_path( mdpath )
+    canonicalid = pu.upsert_single_retid( dbcur, "canonical", [ ("sum",csum), ("len",flen) ] )
+    if canonicalid != None:
+        upsert_hostpaths( dbcur, canonicalid, md )
+        upsert_extension( dbcur, canonicalid, md )
+        upsert_mime_types( dbcur, canonicalid, md )
+        upsert_oldest( dbcur, canonicalid, md )
+        dbcur.close()
+        dbconn.commit()
+        sys.exit(1)
+        return True
+    return False
+
+def usage(msg=None):
+    if msg:
+        visit_core.log_error("[%s]\n" % msg)
+    visit_core.log_error( "usage: %s <canonical-root-dir>\n" % sys.argv[0] )
+    visit_core.log_error( "was: %s\n" % " ".join( sys.argv ) )
+    sys.exit()
+
+def test():
+    visit_core.log_error( "test(): not implemented\n" )
+    sys.exit()
+
+if __name__ == '__main__':
+    print "moving to java, i'm sick of python..."
+    sys.exit(1)
+    dm = visit_core.main_helper( usage )
+
+    try:
+        root = sys.argv[1]
+    except:
+        usage(msg=(sys.exc_info()[0]))
+
+    dbconn = db.connect( host="psync-o-pathics.com", user="pybak", password="kabyp", database="pybakdb" )
+    def visit_single( file_count, full_path, data ):
+        if util.smells_like_json_metadata( full_path ):
+            visit_core.log( "reading %s\n" % full_path )
+            if not dm['dry_run']:
+                md = metadata.read_json_path( full_path )
+                md2 = metadata.fix_mistakes( md )
+                visit_single_md( dbconn, full_path, md2 )
+
+    single_path = util.eat_arg( sys.argv, "single", remove=True, reqval=True )
+    if single_path != None:
+        visit_single( 0, single_path )
+        f = 1
+    else:
+        f = visit_core.visit( root, dm['max_depth'], visit_single )
+
+    dbconn.close()
+    
+    print "visited %s file(s)" % f

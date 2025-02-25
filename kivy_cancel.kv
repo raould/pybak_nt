@@ -1,0 +1,24 @@
+<-CancelPopup>:
+	GridLayout:
+		cols: 1
+		padding: '12dp'
+		pos_hint: {'center': (0.5, 0.5)}
+		size_hint_x: 0.66
+		size_hint_y: None
+		height: self.minimum_height
+		canvas:
+			Color:
+				rgba: [0.3,0,0,0.95]
+			Rectangle:
+				size: root._window.size if root._window else (0, 0)
+		Label:
+			color: 1,1,1,1
+			text: root.text
+			size_hint_y: None
+			halign: 'center'
+		BoxLayout:
+			size_hint_y: None
+			height: sp(48)
+			Button:
+				text: root.cancel_text
+				on_press: root.cancel()

@@ -1,0 +1,81 @@
+* save_chunk etc. must handle getting a metadata file that should be merged rather than store as a canonical file.
+
+----------
+
++ i kinda super hate python. just so you know.
+    + no, really!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	
++ rewrite it all.
+	+ in a better language.
+	+ with static type checking.
+	+ especially for date/times.
+	+ especially for string encodings end-to-end.
+	+ let alone every input/output.
+	
++ don't crawl some directories by default:
+  + .hg
+  + .git
+  + mac os x Library
+  + browser caches
+  + temp/tmp dirs?
+
++ fix re-crawling old pybak data, merge or skip properly.
+
++ fix up handling of unhexlifyable bytes/strings.
+
++ fix java to not injest things where metadata path is in 'canonical'.
++ use a typed language for metadata for clear vs. hexl paths.
++ filepath parts is not right; often not split.
++ migrate all metadata to version 10.
++ assert expected mdj
+  + hexl file paths, not clear.
+  + file path parts.
+
++ metadata should include file date from source hosts.
+	+ oh it might already. not sure we consume it well everywhere e.g. images by date.
+
+----------
+
++ pysonar2.
++ split up file paths on client side.
+  + figure out how it should work on windows.
+  + presumably path_to_list() root-base case's aren't right for windows!
++ make sure path is done right relatively.
+
+* note that character encoding was never handled well,
+so if things work it is mostly by dumb luck. for example,
+the postgres db (luckly?) defaulted to utf-8.
+
+* fix command line argument parsing; use a real library!
+
++ put the .ext on the canonical file instead.
++ support deleting things from the browse-name view.
++ fix sheets in various ways.
++ maybe do things lazily instead e.g. sheets.
+
+* delete metadata if there's no matching canonical.
+* sheets should be jpgs and should make big jpgs behind them?
+  	* uhg, at least show filenames in sheets.
+  	* is there an equivalent jpg for nef?
+	* can't tell unless original file names preserved.
+	* so my import rename hack should be an extn, not total rename.
+* nefs aren't supported in browsers.
+* finding all movies, all photos.
+* uploading, diffing.
+
+* really, fix up argument parsing.
+* fix argument parsing to die if there's unknowns like misspelled things.
+	* e.g. somebody writes "--max-epth"
+
+* aka bugs:
+	* listing breaks on things in root.
+	* not showing everything that was in metadata?
+* gui support for deleting things with are you really sure?
+* fix argument parsing to die if there's unknowns like misspelled things.
+	* e.g. somebody writes "--max-epth"
+* a wx gui.
+* streaming tar file generation for downloading from browse.
+* streaming tar file generation.
+
+
+
