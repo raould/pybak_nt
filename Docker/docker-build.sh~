@@ -1,4 +1,0 @@
-docker rm -f pybakd-docker
-docker rm -f pybakd
-docker build -t pybakd -f Docker.pybakd
-docker build -t pybak-client -f Docker.client
