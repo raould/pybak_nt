@@ -28,7 +28,7 @@ def getPID_FILE(): return '%s/var/run/pybakd/pybakd.pid' % getPREFIX()
 def getBASE_DIR(): return '%s/home/pybak' % getPREFIX()
 def getBAK_SUBDIR(): return 'canonical'
 
-def userprog():
+def user_prog():
     print( "pybakd: run..." )
     util.ensure_path( getBASE_DIR() )
     sys.stdout.write( "%s %s\n" % ( getBASE_DIR(), getBAK_SUBDIR() ) )
@@ -113,6 +113,8 @@ if __name__ == "__main__":
     print( "pybakd: started with %s" % sys.argv )
     if '-test' in sys.argv or '--test' in sys.argv:
         gTest = True
-        userprog();
+        user_prog()
+    elif '-docker' in sys.argv:
+        user_prog()
     else:
-        main_daemon( userprog )
+        main_daemon( user_prog )

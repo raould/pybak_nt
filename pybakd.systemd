@@ -1,0 +1,53 @@
+#!/bin/bash
+### BEGIN INIT INFO
+# Provides:          pybakd
+# Required-Start:    
+# Required-Stop:     
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: pybakd
+# Description:       pybakd
+### END INIT INFO
+
+# Source function library.
+# apparently this only exists on centos:
+if [ -e /etc/init.d/functions ]; then
+   . /etc/init.d/functions
+fi
+
+start() {
+	echo "Starting pybakd: "
+	pushd /home/pybak/Bin/pybak_nt
+	(./pybakd.py )&
+	popd
+	touch /var/lock/subsys/pybakd
+	return 0
+}	
+
+stop() {
+	echo "Shutting down pybakd: "
+	ps aux | grep pybakd.py | grep python | grep -v grep | awk '{print $2}' | xargs kill
+	rm -f /var/lock/subsys/pybakd
+	return 0
+}
+
+case "$1" in
+    start)
+	start
+	;;
+    stop)
+	stop
+	;;
+    status)
+    	ps ux | grep pybakd.py
+	;;
+    restart)
+    	stop
+	start
+	;;
+    *)
+	echo "Usage: pybakd {start|stop|status|restart}"
+	exit 1
+	;;
+esac
+exit $?
