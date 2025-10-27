@@ -5,9 +5,11 @@ if [ -f "Dockerfile.pybakd" ] || [ -f "Dockerfile.client" ]; then
     exit 1
 fi
 
+DAEMON=pybakd
 docker rm -f pybakd-docker
-docker rm -f pybakd
-docker build -t pybakd -f Docker/Dockerfile.pybakd .
+docker rm -f ${DAEMON}
+docker build -t ${DAEMON} -f Docker/Dockerfile.pybakd .
 
-docker rm -f pybak-client
-docker build -t pybak-client -f Docker/Dockerfile.client .
+CLIENT=pybak-client
+docker rm -f ${CLIENT}
+docker build -t ${CLIENT} -f Docker/Dockerfile.client .
