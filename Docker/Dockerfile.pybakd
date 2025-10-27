@@ -1,0 +1,6 @@
+FROM python:2.7
+WORKDIR /home/pybak
+EXPOSE 6969
+RUN pip install pathlib2 requests Pillow boto3 botocore rawpy
+COPY . .
+CMD ["python", "./pybakd.py", "-docker"]
