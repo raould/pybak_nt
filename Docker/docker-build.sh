@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-if [ -f "Dockerfile.pybakd" || -f "Dockerfile.client" ]; then
+if [ -f "Dockerfile.pybakd" ] || [ -f "Dockerfile.client" ]; then
     echo "I must be run from the pybak git root directory."
     exit 1
 fi
