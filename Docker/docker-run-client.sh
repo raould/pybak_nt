@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
 
+# usage:
+# (from the pybak git root directory)
+# Docker/docker-run-pybakd.sh (if not already running)
+# Docker/docker-run-client.sh dir1 dir2 ... dirN pybak
+
 echo "pruning..."
-IMAGE_NAME=pybakd
+IMAGE_NAME=pybak-client
 docker ps --filter "ancestor=${IMAGE_NAME}" --format "{{.Names}}" | xargs -I X docker container stop "X"
 docker container prune -f
 echo "...done pruning"
 
-echo "starting..."
 NETWORK=pybak-network
-docker network create ${NETWORK}
 docker run \
-       --name pybakd \
        --network ${NETWORK} \
        -t \
-       -v /home/pybak/canonical:/home/pybak/canonical \
-       -v /home/pybak/browse:/home/pybak/browse \
-       -p 6969:6969 \
-       --detach \
-       pybakd
-echo "...started"
+       pybak-client "$@"
+
