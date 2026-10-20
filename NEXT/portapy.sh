@@ -5,5 +5,5 @@ python3 "$PORTAPY/scripts/run_docker.py" \
     --project /home/superman/Dev/pybak_nt/NEXT \
     --read-only \
     --network-none \
-    -- python client.py
+    -- python client.py /tmp
 set +x

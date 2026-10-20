@@ -1,6 +1,9 @@
 all: check run
 
-run:
+run_int:
+	PYTHONPATH="/home/superman/Dev/pybak_nt/NEXT/portapy_sdk" python3 /home/superman/Dev/pybak_nt/NEXT/client.py /tmp
+
+run_ext:
 	PYTHONPATH="/home/superman/Dev/portapy/src" python3 /home/superman/Dev/pybak_nt/NEXT/client.py /tmp
 
 check:
