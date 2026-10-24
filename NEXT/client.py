@@ -387,11 +387,13 @@ def decide(kind, relation, place):
     return 'skip'
 
 
-def classify_and_decide(path, allowed_devs, ancestors):
+def classify_and_decide(cursor, allowed_devs):
     """One call per entry: returns (action, kind, lstat, target_stat, errno).
     ancestors: the dir keys from the crawl root down to the directory that
     holds this entry (see the vocabulary).
     """
+    ancestors = cursor[:-1]
+    path = os.path.join(*cursor)
     classified = classify_entry(path)
     target = classified[2]
     action = decide(classified[0], fs_relation(target, allowed_devs),
@@ -476,7 +478,7 @@ def crawl_tree(root):
             cursor.append(entry)
             try:
                 entry_path = os.path.join(*cursor)
-                classification = classify_and_decide(entry_path, allowed_devs, cursor)
+                classification = classify_and_decide(cursor, allowed_devs)
                 action = classification[0]
                 ppy.prnt('???', action, entry_path)
                 if action != 'skip':
@@ -493,9 +495,6 @@ def crawl_tree(root):
                 traceback.print_exc()
                 sys.exit(1)
             cursor.pop()
-            # just for debugging.
-            if len(pending_dirs) > 2:
-                break
         ppy.prnt('---', dir_path, cur_digest.entries)
         sync_digest(cur_digest)
 
