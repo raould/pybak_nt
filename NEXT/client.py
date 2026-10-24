@@ -448,6 +448,14 @@ def open_for_read(path, target_stat):
 
 #----------------------------------------
 
+def get_metadata(entry_path):
+    bmeta = {}
+    st = os.stat(entry_path)
+    is_reg = stat.S_ISREG(st[stat.ST_MODE])
+    ppy.bd_add(bmeta, 'stat', ppy.bmeta_stat(st))
+    ppy.bd_add(bmeta, 'lstat', ppy.bmeta_stat(os.lstat(entry_path)))
+    return bmeta
+
 def crawl_tree(root):
     allowed_devs = allowed_devs_for_roots([root])
     ppy.prnt('allowed_devs', allowed_devs)
@@ -469,12 +477,6 @@ def crawl_tree(root):
             cursor.append(entry)
             try:
                 entry_path=os.path.join(*cursor)
-                bmeta = {}
-                st = os.stat(entry_path)
-                is_reg = stat.S_ISREG(st[stat.ST_MODE])
-                ppy.bd_add(bmeta, 'stat', ppy.bmeta_stat(st))
-                ppy.bd_add(bmeta, 'lstat', ppy.bmeta_stat(os.lstat(entry_path)))
-                # todo: all the special casing in the TODOs above, including metadata.
                 classification = classify_and_decide(entry_path, allowed_devs, cursor)
                 action = classification[0]
                 ppy.prnt('???', action, entry_path)
@@ -482,6 +484,7 @@ def crawl_tree(root):
                     if action == 'descend':
                         pending_dirs.append(cursor[:])
                     elif action == 'read':
+                        bmeta = get_metadata(entry_path)
                         cur_digest.add_file(cursor[:], bmeta)
                     else:
                         raise Exception(action)
@@ -491,6 +494,7 @@ def crawl_tree(root):
                 traceback.print_exc()
                 sys.exit(1)
             cursor.pop()
+            break # just for debugging.
         ppy.prnt('---', dir_path, cur_digest.entries)
         sync_digest(cur_digest)
 
