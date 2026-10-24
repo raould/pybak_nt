@@ -131,13 +131,13 @@ crawl TODOs:
 
 - handle unbounded & special files.
 
-- aka ignore bad-smelling files.
+- ignore bad-smelling files (based on filenames, extensions, etc.).
 
 - test edge cases like: path too long.
 
-- macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
+- support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
 
-- Check what the link points to before reading. A symlink to /dev/zero, a FIFO or a device would be an unbounded or blocking read. Use os.stat, which follows the link, unlike lstat, and read only if S_ISREG is true. A dangling symlink makes os.stat raise, so record it as skipped. It’s still worth recording that the path is a symlink, using lstat plus the os.readlink target, alongside the content’s MD5.
+- Check what the link points to before reading. A symlink to /dev/zero, a FIFO or a device would be an unbounded or blocking read. Use os.stat, which follows the link, unlike lstat, and read only if S_ISREG is true.
 
 - os.path.isdir() follows symlinks too. It returns True for a symlink to a directory, so the current client does descend into symlinked directories, which is the loop case you want to avoid. Use os.path.isdir(p) and not os.path.islink(p), or stat.S_ISDIR(os.lstat(p)[stat.ST_MODE]). On Windows, islink doesn’t recognize junctions before Python 3.12, so the user-profile junction loops can still happen. On Python 3.5+, also skip directories whose st_file_attributes has the reparse-point bit (0x400).
 
@@ -290,18 +290,18 @@ POLICY = (
     (('link-file',     'allowed'), 'read'),
     (('link-file',     'unknown'), 'read'),
     (('link-file',     'other'),   'skip'),
+    # the fallback.
+    ((None,            None),      'skip'),
 )
 
 
 def decide(kind, relation):
     for row in POLICY:
-        p = row[0]
-        if (p[0] is None or p[0] == kind) and (p[1] is None or p[1] == relation):
+        pk, pr = row[0]
+        if (pk is None or pk == kind) and (pr is None or pr == relation):
             ppy.prnt('policy row', row)
             return row[1]
-    ppy.prnt('decide: fallback')
-    return 'skip'
-
+    raise Exception('failed to decide:  (%s, %s)' % (kind, relation))
 
 def classify_and_decide(path, allowed_devs):
     """returns (action, kind, lstat, target_stat)."""
@@ -314,7 +314,7 @@ def classify_and_decide(path, allowed_devs):
 def crawl_tree(root):
     allowed_devs = get_root_devs([root])
     ppy.prnt('allowed_devs', allowed_devs)
-    # breadth-first, pre-order... i think.
+    # depth-first, pre-order... i think.
     pending_dirs = [[root]]
     cursor = []
     while len(pending_dirs) > 0:
