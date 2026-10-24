@@ -494,7 +494,7 @@ def crawl_tree(root):
                 traceback.print_exc()
                 sys.exit(1)
             cursor.pop()
-            break # just for debugging.
+            #break # just for debugging.
         ppy.prnt('---', dir_path, cur_digest.entries)
         sync_digest(cur_digest)
 
