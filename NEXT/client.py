@@ -459,12 +459,11 @@ def get_metadata(entry_path):
 def crawl_tree(root):
     allowed_devs = allowed_devs_for_roots([root])
     ppy.prnt('allowed_devs', allowed_devs)
-    # depth-first, pre-order... i think.
     pending_dirs = [[root]]
     cursor = []
     while len(pending_dirs) > 0:
-        ppy.prnt(len(pending_dirs))
-        cursor = pending_dirs.pop(0)
+        cursor = pending_dirs.pop() # stack, depth-first.
+        ppy.prnt("@", cursor, pending_dirs)
         dir_path = os.path.join(*cursor)
         cur_digest = Digest()
         entries = []
@@ -476,7 +475,7 @@ def crawl_tree(root):
         for entry in entries:
             cursor.append(entry)
             try:
-                entry_path=os.path.join(*cursor)
+                entry_path = os.path.join(*cursor)
                 classification = classify_and_decide(entry_path, allowed_devs, cursor)
                 action = classification[0]
                 ppy.prnt('???', action, entry_path)
@@ -494,7 +493,9 @@ def crawl_tree(root):
                 traceback.print_exc()
                 sys.exit(1)
             cursor.pop()
-            #break # just for debugging.
+            # just for debugging.
+            if len(pending_dirs) > 2:
+                break
         ppy.prnt('---', dir_path, cur_digest.entries)
         sync_digest(cur_digest)
 
