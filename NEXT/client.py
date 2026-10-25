@@ -7,7 +7,8 @@ import traceback
 import binascii
 #portapy_pragma ALLOW_MODULE
 import errno
-
+#portapy_pragma ALLOW_MODULE
+import socket
 
 _PYB_CHUNK_SIZE=1024*1024
 name_kind, root_to_native, name_to_bytes = ppy.choose_naming_T()
@@ -21,6 +22,126 @@ name_kind, root_to_native, name_to_bytes = ppy.choose_naming_T()
 # we are painted into a corner by having to support Python 2.0 - Python 3.x.
 
 # ---------------------------------------------------------------------------
+
+#----------------------------------------
+# http over socket, "because Python 2.0".
+
+"""Minimal HTTP/1.0 client over raw sockets, portable from Python 2.0 to 3.x.
+
+One request per connection: the client sends 'Connection: close', the server
+answers and closes, and the client reads until EOF. That is all HTTP/1.0 needs,
+and it avoids keep-alive and chunked encoding entirely. Bodies are bytes; the
+caller chooses the format (pybak uses bencode both ways).
+
+  r = http_request('192.168.1.10', 8765, 'POST', '/digest', body_bytes, 'application/x-bencode', 60)
+  r['status'], r['headers'][b'content-type'], r['body']
+
+Header names in r['headers'] are lowercased bytes. A response is rejected if it
+uses chunked transfer encoding, or if it is shorter than its Content-Length (the
+connection was cut off).
+
+Timeouts need socket.settimeout (Python 2.3+). On older versions timeout_seconds
+is ignored and a dead server can block the client.
+"""
+
+_CRLF = ppy.a2b('\r\n')
+_HEADER_END = ppy.a2b('\r\n\r\n')
+_SPACE = ppy.a2b(' ')
+_COLON = ppy.a2b(':')
+_EMPTY = ppy.a2b('')
+_CONTENT_LENGTH = ppy.a2b('content-length')
+_TRANSFER_ENCODING = ppy.a2b('transfer-encoding')
+_RECV_SIZE = 65536
+
+
+class HttpError(Exception):
+    pass
+
+
+def send_all(sock, data):
+    """sock.sendall where it exists, else a send() loop."""
+    sendall = getattr(sock, 'sendall', None)
+    if sendall is not None:
+        sendall(data)
+        return
+    while len(data) > 0:
+        sent = sock.send(data)
+        data = data[sent:]
+
+
+def recv_until_eof(sock):
+    parts = []
+    while 1:
+        data = sock.recv(_RECV_SIZE)
+        if not data:
+            break
+        parts.append(data)
+    return _EMPTY.join(parts)
+
+
+def build_request(host, port, method, path, body, content_type):
+    """Request head + body as bytes. host, method, path, content_type: ASCII native str."""
+    head = []
+    head.append('%s %s HTTP/1.0\r\n' % (method, path))
+    head.append('Host: %s:%d\r\n' % host)
+    head.append('Content-Type: %s\r\n' % content_type)
+    head.append('Content-Length: %d\r\n' % len(body))
+    head.append('Connection: close\r\n')
+    return ppy.a2b(_EMPTY.join(head)) + body
+
+
+def parse_response(data):
+    """Raw response bytes -> {'status': int, 'headers': {lowercased bytes: bytes}, 'body': bytes}."""
+    end = data.find(_HEADER_END)
+    if end < 0:
+        raise HttpError("no end of headers in response (%d bytes)" % len(data))
+    lines = data[:end].split(_CRLF)
+    status_parts = lines[0].split(_SPACE)
+    if len(status_parts) < 2:
+        raise HttpError("bad status line")
+    status = int(ppy.b2a(status_parts[1]))
+    headers = {}
+    for line in lines[1:]:
+        colon = line.find(_COLON)
+        if colon < 0:
+            continue
+        headers[line[:colon].strip().lower()] = line[colon + 1:].strip()
+    # headers.get(): 'in' on a dict needs 2.2+, and the old method is gone in 3.
+    if headers.get(_TRANSFER_ENCODING) is not None:
+        raise HttpError("transfer encoding not supported")
+    body = data[end + len(_HEADER_END):]
+    content_length = headers.get(_CONTENT_LENGTH)
+    if content_length is not None:
+        length = int(ppy.b2a(content_length))
+        if len(body) < length:
+            raise HttpError("response cut off: %d of %d body bytes" % (len(body), length))
+        body = body[:length]
+    return {'status': status, 'headers': headers, 'body': body}
+
+
+def http_request(host, port, method, path, body, content_type, timeout_seconds):
+    """One HTTP/1.0 request on a fresh connection. Raises HttpError or socket.error."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        settimeout = getattr(sock, 'settimeout', None)      # 2.3+
+        if settimeout is not None:
+            settimeout(timeout_seconds)
+        sock.connect((host, port))
+        send_all(sock, build_request(host, port, method, path, body, content_type))
+        data = recv_until_eof(sock)
+    finally:
+        sock.close()
+    return parse_response(data)
+
+
+def post_bencode(host, port, path, value, timeout_seconds):
+    """POST a bencoded value, return the decoded bencode reply. Non-200 raises HttpError."""
+    r = http_request(host, port, 'POST', path, ppy.bencode(value), 'application/x-bencode', timeout_seconds)
+    if r['status'] != 200:
+        raise HttpError("HTTP %d from %s: %r" % (r['status'], path, r['body'][:200]))
+    return ppy.bdecode(r['body'])
+
+
 
 #----------------------------------------
 # support MD5 file hashing.
@@ -63,35 +184,35 @@ def unhexlify_list(l):
 def stat_for_server(st):
     """os.stat/lstat result -> dict, portable from Python 2.0 to 3.x."""
     fields = {
-        ppy.a2b('mode'):  st[stat.ST_MODE],
-        ppy.a2b('ino'):   st[stat.ST_INO],
-        ppy.a2b('dev'):   st[stat.ST_DEV],
-        ppy.a2b('nlink'): st[stat.ST_NLINK],
-        ppy.a2b('size'):  st[stat.ST_SIZE],
-        ppy.a2b('mtime'): st[stat.ST_MTIME],      # integer seconds on every version
-        ppy.a2b('ctime'): st[stat.ST_CTIME],
+        ppy.bkey('mode'):  st[stat.ST_MODE],
+        ppy.bkey('ino'):   st[stat.ST_INO],
+        ppy.bkey('dev'):   st[stat.ST_DEV],
+        ppy.bkey('nlink'): st[stat.ST_NLINK],
+        ppy.bkey('size'):  st[stat.ST_SIZE],
+        ppy.bkey('mtime'): st[stat.ST_MTIME],      # integer seconds on every version
+        ppy.bkey('ctime'): st[stat.ST_CTIME],
     }
     mtime_ns = getattr(st, 'st_mtime_ns', None)       # 3.3+
     if mtime_ns is not None:
-        fields[ppy.a2b('mtime_ns')] = mtime_ns
+        fields[ppy.bkey('mtime_ns')] = mtime_ns
     for name in ('st_blocks', 'st_file_attributes'):
         value = getattr(st, name, None)
         if value is not None:
-            fields[ppy.a2b(name[3:])] = value
+            fields[ppy.bkey(name[3:])] = value
     # st_birthtime is a float (macOS, BSD, Windows 3.12+); bencode has no
     # floats, so send whole seconds, or nanoseconds where Python has them.
     birth_ns = getattr(st, 'st_birthtime_ns', None)      # 3.12+
     if birth_ns is not None:
-        fields[ppy.a2b('birthtime_ns')] = birth_ns
+        fields[ppy.bkey('birthtime_ns')] = birth_ns
     birth = getattr(st, 'st_birthtime', None)
     if birth is not None:
-        fields[ppy.a2b('birthtime')] = int(birth)
+        fields[ppy.bkey('birthtime')] = int(birth)
     return fields
 
 def meta_stats_for_server(meta):
     m = {}
-    m[ppy.a2b('stat')] = stat_for_server(meta['stat'])
-    m[ppy.a2b('lstat')] =  stat_for_server(meta['lstat'])
+    m[ppy.bkey('stat')] = stat_for_server(meta['stat'])
+    m[ppy.bkey('lstat')] =  stat_for_server(meta['lstat'])
     return m
 
 def get_manifest_entry_sort_key(e):
@@ -100,7 +221,7 @@ class Manifest:
     def __init__(self):
         self.entries = []
         self.bmetadata = {}
-        ppy.bd_add(self.bmetadata, 'name_kind', ppy.a2b(name_kind))
+        ppy.bd_add(self.bmetadata, 'name_kind', ppy.bkey(name_kind))
         # todo:
         # filesystemencoding
         # et. al.
@@ -140,29 +261,41 @@ class Manifest:
         sorted = ppy.sorted_list(self.entries, get_manifest_entry_sort_key)
         ppy.bd_add(bd, 'entries', sorted)
         return ppy.bencode(bd)
-    def foreach(self, on_entry): # nigh useless w/out lambda support.
-        for e in self.entries:
-            on_entry(e) # dict of {path, hexl_path, md5, length}
     def get_name_kind(self):
-        return ppy.b2a(self.bmetadata[ppy.a2b('name_kind')])
+        return ppy.b2a(self.bmetadata[ppy.bkey('name_kind')])
 
 class ManifestUnmarshalled:
     def __init__(self, data):
         init = ppy.bdecode(data)
         if init is not None:
-            self.bmetadata = init[ppy.a2b('bmetadata')]
-            self.entries = init[ppy.a2b('entries')]
+            self.bmetadata = init[ppy.bkey('bmetadata')]
+            self.entries = init[ppy.bkey('entries')]
     def to_debug_str(self):
         return "'%s' %s" % (self.bmetadata, self.entries)
     def get_name_kind(self):
-        return ppy.b2a(self.bmetadata[ppy.a2b('name_kind')])
+        return ppy.b2a(self.bmetadata[ppy.bkey('name_kind')])
 
 class WantedSync:
+    def __init__(self):
+        self.entries = []
+    def add_file(self, hexl_path, offset):
+        e = {}
+        ppy.bd_add(e, 'hexl_path', hexl_path)
+        ppy.bd_add(e, 'offset', offset)
+        self.entries.append(e)
+    def marshall(self):
+        bd = {}
+        ppy.bd_add(bd, 'entries', self.entries)
+        return ppy.bencode(bd)
+    def to_debug_str(self):
+        return str(self.entries)
+
+class WantedSyncUnmarshalled:
     def __init__(self, data):
-        self.body = ppy.bdecode(data)
-    def foreach(self, on_entry): # nigh useless w/out lambda support.
-        for b in self.body:
-            on_entry(b) # dict of {path, offset}
+        bd = ppy.bdecode(data)
+        self.entries = bd[ppy.bkey('entries')]
+    def to_debug_str(self):
+        return str(self.entries)
         
 def fake_sender(path, chunk, pos):
     ppy.prnt('>>> sending', pos, len(chunk), path)
@@ -191,16 +324,16 @@ def sync_one(path, sender, offset=0, chunk_size=_PYB_CHUNK_SIZE):
 
 def fake_server_sync(data):
     # fake response: send all of every file.
-    wanted = []
     manifest = ManifestUnmarshalled(data)
     ppy.prnt('client manifest', manifest.to_debug_str())
+    wanted = WantedSync()
     for e in manifest.entries:
-        w = {}
-        w[ppy.bkey('hexl_path')] = e[ppy.bkey('hexl_path')]
-        w[ppy.bkey('offset')] = 0
-        wanted.append(w)
-    ppy.prnt('response', wanted)
-    return ppy.bencode(wanted)
+        wanted.add_file(
+            e[ppy.bkey('hexl_path')],
+            0 # todo: server has to introspect storage.
+            )            
+    ppy.prnt('response', wanted.to_debug_str())
+    return wanted.marshall()
 
 def sync_manifest(manifest):
     # 0) add metadata (hostname, sysinfo, os.*, etc.)
@@ -209,9 +342,10 @@ def sync_manifest(manifest):
     # 3) for each wanted, send it (chunked, with seek) to the server.
     response = fake_server_sync(manifest.marshall())
     ppy.prnt('response', response)
-    wanted = ppy.bdecode(response)
-    ppy.prnt('wanted', wanted)
-    for w in wanted:
+    wanted = WantedSyncUnmarshalled(response)
+    ppy.prnt('wanted', wanted.to_debug_str())
+    for w in wanted.entries:
+        ppy.prnt('w', w)
         hexl_path = w[ppy.bkey('hexl_path')]
         ppy.prnt(hexl_path)
         cursor = unhexlify_list(hexl_path)
