@@ -85,7 +85,7 @@ def meta_stats_for_server(meta):
     return m
 
 def get_digest_entry_sort_key(e):
-    return e[ppy.bkey('length')]
+    return e[ppy.bkey('hexl_path')]
 class Digest:
     def __init__(self, entries=None):
         self.entries = entries or [] # public!
@@ -105,7 +105,6 @@ class Digest:
             ppy.prnt('md5', md5)
             ppy.prnt('length', length)
             e = {}
-            ppy.bd_add(e, 'path', path)
             ppy.bd_add(e, 'hexl_path', hexlify_list(cursor))
             ppy.bd_add(e, 'md5', binascii.hexlify(md5))
             ppy.bd_add(e, 'length', length)
@@ -117,6 +116,7 @@ class Digest:
             ppy.prntlog(ppy.PPY_ERROR, str(e))
             ppy.prntlog(ppy.PPY_ERROR, type(cursor))
     def marshall(self):
+        # enforce a canonical ordering, to make testing easier.
         sorted = ppy.sorted_list(self.entries, get_digest_entry_sort_key)
         return ppy.bencode(sorted)
     def foreach(self, on_entry): # not actually very useful on python 2.0
