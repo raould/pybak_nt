@@ -606,7 +606,7 @@ def crawl_tree(root):
             cursor.pop()
         ppy.prnt('---', dir_path, cur_manifest.entries)
         sync_manifest(cur_manifest)
-        break # todo: do not commit this testing hack.
+        #break # todo: do not commit this testing hack.
 
 # ----------------------------------------
 # (1) we have to obtain the names of paths + files, and know what their type is.
