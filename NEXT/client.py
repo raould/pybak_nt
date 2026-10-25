@@ -9,9 +9,17 @@ import binascii
 import errno
 #portapy_pragma ALLOW_MODULE
 import socket
+#portapy_pragma ALLOW_MODULE
+import naming
+#portapy_pragma ALLOW_MODULE
+import client_util
+#portapy_pragma ALLOW_MODULE
+import wanted_sync
+#portapy_pragma ALLOW_MODULE
+import http_client
 
 _PYB_CHUNK_SIZE=1024*1024
-name_kind, root_to_native, name_to_bytes = ppy.choose_naming_T()
+name_kind, root_to_native, name_to_bytes, bytes_to_name = naming.choose_naming_T()
 
 #
 # a new pybak client, for ('any' OS) x (any Python version 2.0+).
@@ -22,170 +30,6 @@ name_kind, root_to_native, name_to_bytes = ppy.choose_naming_T()
 # we are painted into a corner by having to support Python 2.0 - Python 3.x.
 
 # ---------------------------------------------------------------------------
-
-#----------------------------------------
-# http over socket, "because Python 2.0".
-
-"""Minimal HTTP/1.0 client over raw sockets, portable from Python 2.0 to 3.x.
-
-One request per connection: the client sends 'Connection: close', the server
-answers and closes, and the client reads until EOF. That is all HTTP/1.0 needs,
-and it avoids keep-alive and chunked encoding entirely. Bodies are bytes; the
-caller chooses the format (pybak uses bencode both ways).
-
-  r = http_request('192.168.1.10', 8765, 'POST', '/digest', body_bytes, 'application/x-bencode', 60)
-  r['status'], r['headers'][b'content-type'], r['body']
-
-Header names in r['headers'] are lowercased bytes. A response is rejected if it
-uses chunked transfer encoding, or if it is shorter than its Content-Length (the
-connection was cut off).
-
-Timeouts need socket.settimeout (Python 2.3+). On older versions timeout_seconds
-is ignored and a dead server can block the client.
-"""
-
-_HTTP_CRLF = ppy.a2b('\r\n')
-_HTTP_HEADER_END = ppy.a2b('\r\n\r\n')
-_HTTP_SPACE = ppy.a2b(' ')
-_HTTP_COLON = ppy.a2b(':')
-_HTTP_EMPTY = ppy.a2b('')
-_HTTP_CONTENT_LENGTH = ppy.a2b('content-length')
-_HTTP_TRANSFER_ENCODING = ppy.a2b('transfer-encoding')
-_HTTP_RECV_SIZE = 65536
-
-
-class HttpError(Exception):
-    pass
-
-
-def send_all(sock, data):
-    """sock.sendall where it exists, else a send() loop."""
-    sendall = getattr(sock, 'sendall', None)
-    if sendall is not None:
-        sendall(data)
-        return
-    while len(data) > 0:
-        sent = sock.send(data)
-        data = data[sent:]
-
-
-def recv_until_eof(sock):
-    parts = []
-    while 1:
-        data = sock.recv(_HTTP_RECV_SIZE)
-        if not data:
-            break
-        parts.append(data)
-    return _HTTP_EMPTY.join(parts)
-
-
-def build_request(host, port, method, path, body, content_type):
-    """Request head + body as bytes. host, method, path, content_type: ASCII native str."""
-    parts = []
-    parts.append('%s %s HTTP/1.0\r\n' % (method, path))
-    parts.append('Host: %s:%d\r\n' % (host, port))
-    parts.append('Content-Type: %s\r\n' % content_type)
-    parts.append('Content-Length: %d\r\n' % len(body))
-    parts.append('Connection: close\r\n\r\n')
-    head = ''.join(parts)
-    return ppy.a2b(head) + body
-
-
-def parse_response(data):
-    """Raw response bytes -> {'status': int, 'headers': {lowercased bytes: bytes}, 'body': bytes}."""
-    end = data.find(_HTTP_HEADER_END)
-    if end < 0:
-        raise HttpError("no end of headers in response (%d bytes)" % len(data))
-    lines = data[:end].split(_HTTP_CRLF)
-    status_parts = lines[0].split(_HTTP_SPACE)
-    if len(status_parts) < 2:
-        raise HttpError("bad status line")
-    status = int(ppy.b2a(status_parts[1]))
-    headers = {}
-    for line in lines[1:]:
-        colon = line.find(_HTTP_COLON)
-        if colon < 0:
-            continue
-        headers[line[:colon].strip().lower()] = line[colon + 1:].strip()
-    # headers.get(): 'in' on a dict needs 2.2+, and the old method is gone in 3.
-    if headers.get(_HTTP_TRANSFER_ENCODING) is not None:
-        raise HttpError("transfer encoding not supported")
-    body = data[end + len(_HTTP_HEADER_END):]
-    content_length = headers.get(_HTTP_CONTENT_LENGTH)
-    if content_length is not None:
-        length = int(ppy.b2a(content_length))
-        if len(body) < length:
-            raise HttpError("response cut off: %d of %d body bytes" % (len(body), length))
-        body = body[:length]
-    return {'status': status, 'headers': headers, 'body': body}
-
-
-def http_request(host, port, method, path, body, content_type, timeout_seconds):
-    """One HTTP/1.0 request on a fresh connection. Raises HttpError or socket.error."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        settimeout = getattr(sock, 'settimeout', None)      # 2.3+
-        if settimeout is not None:
-            settimeout(timeout_seconds)
-        sock.connect((host, port))
-        send_all(sock, build_request(host, port, method, path, body, content_type))
-        data = recv_until_eof(sock)
-    finally:
-        sock.close()
-    return parse_response(data)
-
-
-def post_data(host, port, path, value, timeout_seconds):
-    """POST data, return the reply. Non-200 raises HttpError."""
-    r = http_request(host, port, 'POST', path, value, 'application/x-bencode', timeout_seconds)
-    if r['status'] != 200:
-        raise HttpError("HTTP %d from %s: %r" % (r['status'], path, r['body'][:200]))
-    return r['body']
-
-def post_data_bencoded(host, port, path, value, timeout_seconds):
-    bv = ppy.bencode(value)
-    body = post_data(host, port, path, bc, timeout_seconds)
-    return ppy.bdecode(body)
-
-
-
-#----------------------------------------
-# support MD5 file hashing.
-try:
-    #portapy_pragma ALLOW_MODULE
-    import hashlib
-    # todo: would want usedforsecurity=False (Python 3.9+) on FIPS systems
-    hasher_new = hashlib.md5
-    #portapy_pragma ALLOW_MODULE_END hashlib
-except ImportError:
-    #portapy_pragma ALLOW_MODULE
-    import md5
-    hasher_new = md5.new
-    #portapy_pragma ALLOW_MODULE_END md5
-def md5_and_length(fp, chunk_size=8192):
-    hasher = hasher_new()
-    count = 0
-    while 1:
-        chunk = fp.read(chunk_size)
-        if not chunk:
-            break
-        hasher.update(chunk)
-        count = count + len(chunk)
-    return (hasher.digest(), count)
-
-# ---------------------------------------------------------------------------
-
-def hexlify_list(l):
-    h = []
-    for e in l:
-        b = name_to_bytes(e)
-        h.append(binascii.hexlify(b))
-    return h
-def unhexlify_list(l):
-    u = []
-    for e in l:
-        u.append(binascii.unhexlify(e))
-    return u
 
 def stat_for_server(st):
     """os.stat/lstat result -> dict, portable from Python 2.0 to 3.x."""
@@ -248,7 +92,7 @@ class Manifest:
             if fp is None:
                 raise IOError("could not read file: %s errno %s" % (opened['state'], opened['err']))
             try:
-                md5_bytes, length = md5_and_length(fp)
+                md5_bytes, length = client_util.md5_and_length(fp)
             finally:
                 fp.close()
             ppy.prnt(cursor[:-1], 'length', length, 'md5', md5_bytes)
@@ -258,7 +102,7 @@ class Manifest:
             if lstat != stat:
                 file_metadata['stat'] = stat
             e = {}
-            ppy.bd_add(e, 'hexl_path', hexlify_list(cursor))
+            ppy.bd_add(e, 'hexl_path', client_util.hexlify_list(cursor, name_to_bytes))
             ppy.bd_add(e, 'md5', binascii.hexlify(md5_bytes))
             ppy.bd_add(e, 'length', length)
             ppy.bd_add(e, 'metadata', meta_stats_for_server(file_metadata))
@@ -288,28 +132,6 @@ class ManifestUnmarshalled:
         return "'%s' %s" % (self.bmetadata, self.entries)
     def get_name_kind(self):
         return ppy.b2a(self.bmetadata[ppy.bkey('name_kind')])
-
-class WantedSync:
-    def __init__(self):
-        self.entries = []
-    def add_file(self, hexl_path, offset):
-        e = {}
-        ppy.bd_add(e, 'hexl_path', hexl_path)
-        ppy.bd_add(e, 'offset', offset)
-        self.entries.append(e)
-    def marshall(self):
-        bd = {}
-        ppy.bd_add(bd, 'entries', self.entries)
-        return ppy.bencode(bd)
-    def to_debug_str(self):
-        return str(self.entries)
-
-class WantedSyncUnmarshalled:
-    def __init__(self, data):
-        bd = ppy.bdecode(data)
-        self.entries = bd[ppy.bkey('entries')]
-    def to_debug_str(self):
-        return str(self.entries)
         
 def fake_sender(path, chunk, pos):
     ppy.prnt('>>> sending', pos, len(chunk), path)
@@ -338,7 +160,8 @@ def sync_one(path, sender, offset=0, chunk_size=_PYB_CHUNK_SIZE):
 
 def fake_server_sync(data):
     # testing http.
-    post_data('0.0.0.0', 8000, '/sync', data, 10)
+    http_client.post_data('0.0.0.0', 8000, '/sync', data, 10)
+
     # fake response: send all of every file.
     manifest = ManifestUnmarshalled(data)
     ppy.prnt('client manifest', manifest.to_debug_str())
@@ -364,7 +187,7 @@ def sync_manifest(manifest):
         ppy.prnt('w', w)
         hexl_path = w[ppy.bkey('hexl_path')]
         ppy.prnt(hexl_path)
-        cursor = unhexlify_list(hexl_path)
+        cursor = unhexlify_list(hexl_path, bytes_to_name)
         ppy.prnt(cursor)
         path = os.path.join(*cursor)
         offset = w[ppy.bkey('offset')]
@@ -373,12 +196,9 @@ def sync_manifest(manifest):
 """
 crawl TODOs:
 
-- Skip network mounts too unless they're explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
-
+- ignore bad-smelling files (based on filenames, extensions, etc.) mainly to avoid trying to crawl exising pybak storage.
+- skip network mounts too unless they're explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
 - handle unbounded & special files.
-
-- ignore bad-smelling files (based on filenames, extensions, etc.).
-
 - support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
 
 """
