@@ -223,8 +223,6 @@ def sync_manifest(manifest):
 """
 crawl TODOs:
 
-- *** Windows UTF-16 naming (Python 2.3-3.5 on Windows): names are text there, but name_to_bytes from choose_naming() is never used, so hexlify_list fails and the reply's hex paths don't map back to native names. ***
-
 - Skip network mounts too unless they're explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
 
 - handle unbounded & special files.
