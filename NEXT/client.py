@@ -61,27 +61,27 @@ def unhexlify_list(l):
 def stat_for_server(st):
     """os.stat/lstat result -> dict, portable from Python 2.0 to 3.x."""
     fields = {
-        'mode':  st[stat.ST_MODE],
-        'ino':   st[stat.ST_INO],
-        'dev':   st[stat.ST_DEV],
-        'nlink': st[stat.ST_NLINK],
-        'size':  st[stat.ST_SIZE],
-        'mtime': st[stat.ST_MTIME],      # integer seconds on every version
-        'ctime': st[stat.ST_CTIME],
+        ppy.a2b('mode'):  st[stat.ST_MODE],
+        ppy.a2b('ino'):   st[stat.ST_INO],
+        ppy.a2b('dev'):   st[stat.ST_DEV],
+        ppy.a2b('nlink'): st[stat.ST_NLINK],
+        ppy.a2b('size'):  st[stat.ST_SIZE],
+        ppy.a2b('mtime'): st[stat.ST_MTIME],      # integer seconds on every version
+        ppy.a2b('ctime'): st[stat.ST_CTIME],
     }
     mtime_ns = getattr(st, 'st_mtime_ns', None)       # 3.3+
     if mtime_ns is not None:
-        fields['mtime_ns'] = mtime_ns
+        fields[ppy.a2b('mtime_ns')] = mtime_ns
     for name in ('st_blocks', 'st_birthtime', 'st_file_attributes'):
         value = getattr(st, name, None)
         if value is not None:
-            fields[name[3:]] = value
+            fields[ppy.a2b(name[3:])] = value
     return fields
 
 def meta_stats_for_server(meta):
     m = {}
-    m['stat'] = stat_for_server(meta['stat'])
-    m['lstat'] =  stat_for_server(meta['lstat'])
+    m[ppy.a2b('stat')] = stat_for_server(meta['stat'])
+    m[ppy.a2b('lstat')] =  stat_for_server(meta['lstat'])
     return m
 
 def get_digest_entry_sort_key(e):
@@ -109,7 +109,7 @@ class Digest:
             ppy.bd_add(e, 'hexl_path', hexlify_list(cursor))
             ppy.bd_add(e, 'md5', binascii.hexlify(md5))
             ppy.bd_add(e, 'length', length)
-            ppy.bd_add(e, 'metadata', ppy.dict_to_bd(meta_stats_for_server(metadata)))
+            ppy.bd_add(e, 'metadata', meta_stats_for_server(metadata))
             self.entries.append(e)
         except (IOError, OSError): # PermissionError
             traceback.print_exc()
