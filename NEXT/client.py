@@ -72,10 +72,18 @@ def stat_for_server(st):
     mtime_ns = getattr(st, 'st_mtime_ns', None)       # 3.3+
     if mtime_ns is not None:
         fields[ppy.a2b('mtime_ns')] = mtime_ns
-    for name in ('st_blocks', 'st_birthtime', 'st_file_attributes'):
+    for name in ('st_blocks', 'st_file_attributes'):
         value = getattr(st, name, None)
         if value is not None:
             fields[ppy.a2b(name[3:])] = value
+    # st_birthtime is a float (macOS, BSD, Windows 3.12+); bencode has no
+    # floats, so send whole seconds, or nanoseconds where Python has them.
+    birth_ns = getattr(st, 'st_birthtime_ns', None)      # 3.12+
+    if birth_ns is not None:
+        fields[ppy.a2b('birthtime_ns')] = birth_ns
+    birth = getattr(st, 'st_birthtime', None)
+    if birth is not None:
+        fields[ppy.a2b('birthtime')] = int(birth)
     return fields
 
 def meta_stats_for_server(meta):
@@ -91,22 +99,28 @@ class Digest:
         self.entries = entries or [] # public!
     def to_debug_str(self):
         return str(self.entries)
-    def add_file(self, cursor, metadata):
-        """ if access is denied to path, it won't be entered into the digest. """
+    def add_file(self, cursor, classification):
+        """ if the file can't be opened safely, it won't be entered into the digest.
+        classification: the tuple from classify_and_decide() for this entry. """
         ppy.prnt('cursor', str(cursor))
-        ppy.prnt('metadata', str(metadata))
         try:
             path = os.path.join(*cursor)
-            (fp, _, _, _) = open_for_read(path, metadata['stat'])
+            opened = open_for_read(path, classification[3])
+            fp = opened[0]
             if fp is None:
-                raise IOError("could not read file")
-            md5, length = md5_and_length(fp)
-            fp.close()
-            ppy.prnt('md5', md5)
+                raise IOError("could not read file: %s errno %s" % (
+                    opened[2], opened[3]))
+            try:
+                md5_bytes, length = md5_and_length(fp)
+            finally:
+                fp.close()
+            # lstat: the entry as classified. stat: the object actually read.
+            metadata = {'lstat': classification[2], 'stat': opened[1]}
+            ppy.prnt('md5', md5_bytes)
             ppy.prnt('length', length)
             e = {}
             ppy.bd_add(e, 'hexl_path', hexlify_list(cursor))
-            ppy.bd_add(e, 'md5', binascii.hexlify(md5))
+            ppy.bd_add(e, 'md5', binascii.hexlify(md5_bytes))
             ppy.bd_add(e, 'length', length)
             ppy.bd_add(e, 'metadata', meta_stats_for_server(metadata))
             self.entries.append(e)
@@ -138,7 +152,16 @@ def fake_sender(path, chunk, pos):
     ppy.prnt('>>> sending', pos, len(chunk), path)
 
 def sync_one(path, sender, offset=0, chunk_size=_PYB_CHUNK_SIZE):
-    f = open(path, 'rb')
+    classified = classify_entry(path)
+    if classified[0] != 'file' and classified[0] != 'link-file':
+        ppy.prntlog(ppy.PPY_WARN, 'not a file any more, not sent: %s' % (path,))
+        return
+    opened = open_for_read(path, classified[2])
+    f = opened[0]
+    if f is None:
+        ppy.prntlog(ppy.PPY_WARN, 'could not open, not sent: %s %s errno %s' % (
+            path, opened[2], opened[3]))
+        return
     pos = offset
     try:
         f.seek(offset)
@@ -187,11 +210,11 @@ crawl TODOs:
 
 x send stats e.g. lstat.st_dev per-file, to handle linux bind-mounted single files.
 
-x Don’t cross into another filesystem (like find -xdev), unless the user lists it as its own root.
+x Don't cross into another filesystem (like find -xdev), unless the user lists it as its own root.
 
 - Always skip pseudo-filesystems when the type is known: proc, sysfs, devtmpfs, cgroup, debugfs, fuse.gvfsd-fuse.
 
-- Skip network mounts too unless they’re explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
+- Skip network mounts too unless they're explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
 
 x handle (soft/hard) links: sync files, ignore dirs (to avoid loops).
 
@@ -205,7 +228,7 @@ x handle (soft/hard) links: sync files, ignore dirs (to avoid loops).
 
 x Check what the link points to before reading. A symlink to /dev/zero, a FIFO or a device would be an unbounded or blocking read. Use os.stat, which follows the link, unlike lstat, and read only if S_ISREG is true.
 
-- os.path.isdir() follows symlinks too. It returns True for a symlink to a directory, so the current client does descend into symlinked directories, which is the loop case you want to avoid. Use os.path.isdir(p) and not os.path.islink(p), or stat.S_ISDIR(os.lstat(p)[stat.ST_MODE]). On Windows, islink doesn’t recognize junctions before Python 3.12, so the user-profile junction loops can still happen. On Python 3.5+, also skip directories whose st_file_attributes has the reparse-point bit (0x400).
+- os.path.isdir() follows symlinks too. It returns True for a symlink to a directory, so the current client does descend into symlinked directories, which is the loop case you want to avoid. Use os.path.isdir(p) and not os.path.islink(p), or stat.S_ISDIR(os.lstat(p)[stat.ST_MODE]). On Windows, islink doesn't recognize junctions before Python 3.12, so the user-profile junction loops can still happen. On Python 3.5+, also skip directories whose st_file_attributes has the reparse-point bit (0x400).
 
 """
 
@@ -250,8 +273,8 @@ else, because "file" on Unix means a dozen different things.
   dir key      (st_dev, st_ino) of a directory, or None when the platform
                reports st_ino as 0 (Python 2 on Windows): no identity.
   ancestors    The dir keys of the directories from the crawl root down to
-               the directory being listed, root first. The crawler appends a
-               key when it descends and removes it when it comes back.
+               the directory being listed, root first. Each pending directory
+               carries its own list: its parent's list plus its own key.
   ancestry     The target compared with the ancestors:
                  'ok'        not one of them, and not too deep
                  'loop'      its dir key is one of the ancestors: entering
@@ -447,12 +470,11 @@ def decide(kind, relation, place):
     return 'skip'
 
 
-def classify_and_decide(cursor, allowed_devs):
+def classify_and_decide(cursor, allowed_devs, ancestors):
     """One call per entry: returns (action, kind, lstat, target_stat, errno).
     ancestors: the dir keys from the crawl root down to the directory that
-    holds this entry (see the vocabulary).
+    holds this entry (see the vocabulary), NOT the path names.
     """
-    ancestors = cursor[:-1]
     path = os.path.join(*cursor)
     classified = classify_entry(path)
     target = classified[2]
@@ -513,50 +535,60 @@ def open_for_read(path, target_stat):
 
 #----------------------------------------
 
-def get_metadata(entry_path):
-    metadata = {}
-    st = os.stat(entry_path)
-    metadata['stat'] = st
-    lst = os.lstat(entry_path)
-    metadata['lstat'] = lst
-    return metadata
+def is_still_dir(dir_path, expected):
+    """Re-check a directory just before listing it: still a directory, not a
+    link, and the same object that was classified. Closes most of the window
+    in which a directory can be swapped for a symlink (os.fwalk closes it
+    completely with directory descriptors, but needs Python 3.3+ on POSIX).
+    expected None (the root) is not checked."""
+    if expected is None:
+        return 1
+    now = classify_entry(dir_path)
+    return now[0] == 'dir' and is_safe_stat(now[2], expected)
 
 def crawl_tree(root):
     allowed_devs = allowed_devs_for_roots([root])
     ppy.prnt('allowed_devs', allowed_devs)
-    pending_dirs = [[root]]
-    cursor = []
+    # Each pending item: (cursor, ancestors, expected_stat). Stack: depth-first.
+    pending_dirs = [([root], [dir_key(os.stat(root))], None)]
     while len(pending_dirs) > 0:
-        cursor = pending_dirs.pop() # stack, depth-first.
-        ppy.prnt("@", cursor, pending_dirs)
+        item = pending_dirs.pop()
+        cursor = item[0]
+        ancestors = item[1]
         dir_path = os.path.join(*cursor)
+        if not is_still_dir(dir_path, item[2]):
+            ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %s' % (
+                dir_path,))
+            continue
         cur_digest = Digest()
         entries = []
         try:
-            entries = os.listdir(dir_path)            
+            entries = os.listdir(dir_path)
         except (IOError, OSError):
             pe = ppy.current_exception()
-            ppy.prnt(str(pe))
+            ppy.prntlog(ppy.PPY_WARN, 'cannot list %s: %s' % (dir_path, pe))
         for entry in entries:
             cursor.append(entry)
+            entry_path = os.path.join(*cursor)
             try:
-                entry_path = os.path.join(*cursor)
-                classification = classify_and_decide(cursor, allowed_devs)
+                classification = classify_and_decide(cursor, allowed_devs,
+                                                     ancestors)
                 action = classification[0]
                 ppy.prnt('???', action, entry_path)
-                if action != 'skip':
-                    if action == 'descend':
-                        pending_dirs.append(cursor[:])
-                    elif action == 'read':
-                        metadata = get_metadata(entry_path)
-                        cur_digest.add_file(cursor[:], metadata)
-                    else:
-                        raise Exception(action)
+                if action == 'descend':
+                    target = classification[3]
+                    pending_dirs.append((cursor[:],
+                                         ancestors + [dir_key(target)],
+                                         target))
+                elif action == 'read':
+                    cur_digest.add_file(cursor[:], classification)
+                elif action != 'skip':
+                    raise Exception(action)
             except (IOError, OSError):
+                # One bad entry must not end the whole crawl: log, go on.
                 pe = ppy.current_exception()
-                ppy.prnt('entry failed', str(pe))
-                traceback.print_exc()
-                sys.exit(1)
+                ppy.prntlog(ppy.PPY_ERROR, 'entry failed %s: %s' % (
+                    entry_path, pe))
             cursor.pop()
         ppy.prnt('---', dir_path, cur_digest.entries)
         sync_digest(cur_digest)
