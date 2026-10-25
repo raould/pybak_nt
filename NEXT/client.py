@@ -26,7 +26,7 @@ _PYB_CHUNK_SIZE=1024*1024
 try:
     #portapy_pragma ALLOW_MODULE
     import hashlib
-    # tood: would want usedforsecurity=False (Python 3.9+) on FIPS systems
+    # todo: would want usedforsecurity=False (Python 3.9+) on FIPS systems
     hasher_new = hashlib.md5
     #portapy_pragma ALLOW_MODULE_END hashlib
 except ImportError:
@@ -206,27 +206,13 @@ def sync_digest(digest):
 """
 crawl TODOs:
 
-x send stats e.g. lstat.st_dev per-file, to handle linux bind-mounted single files.
-
-x Don't cross into another filesystem (like find -xdev), unless the user lists it as its own root.
-
-- Always skip pseudo-filesystems when the type is known: proc, sysfs, devtmpfs, cgroup, debugfs, fuse.gvfsd-fuse.
-
 - Skip network mounts too unless they're explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
-
-x handle (soft/hard) links: sync files, ignore dirs (to avoid loops).
 
 - handle unbounded & special files.
 
 - ignore bad-smelling files (based on filenames, extensions, etc.).
 
-- test edge cases like: path too long.
-
 - support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
-
-x Check what the link points to before reading. A symlink to /dev/zero, a FIFO or a device would be an unbounded or blocking read. Use os.stat, which follows the link, unlike lstat, and read only if S_ISREG is true.
-
-- os.path.isdir() follows symlinks too. It returns True for a symlink to a directory, so the current client does descend into symlinked directories, which is the loop case you want to avoid. Use os.path.isdir(p) and not os.path.islink(p), or stat.S_ISDIR(os.lstat(p)[stat.ST_MODE]). On Windows, islink doesn't recognize junctions before Python 3.12, so the user-profile junction loops can still happen. On Python 3.5+, also skip directories whose st_file_attributes has the reparse-point bit (0x400).
 
 """
 
