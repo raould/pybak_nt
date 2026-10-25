@@ -119,7 +119,7 @@ class Digest:
         # enforce a canonical ordering, to make testing easier.
         sorted = ppy.sorted_list(self.entries, get_digest_entry_sort_key)
         return ppy.bencode(sorted)
-    def foreach(self, on_entry): # not actually very useful on python 2.0
+    def foreach(self, on_entry): # nigh useless w/out lambda support.
         for e in self.entries:
             on_entry(e) # dict of {path, hexl_path, md5, length}
 class DigestFactory:
@@ -130,7 +130,7 @@ class DigestFactory:
 class WantedSync:
     def __init__(self, data):
         self.body = ppy.bdecode(data)
-    def foreach(self, on_entry):
+    def foreach(self, on_entry): # nigh useless w/out lambda support.
         for b in self.body:
             on_entry(b) # dict of {path, offset}
         
