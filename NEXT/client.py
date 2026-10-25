@@ -81,13 +81,14 @@ def recv_until_eof(sock):
 
 def build_request(host, port, method, path, body, content_type):
     """Request head + body as bytes. host, method, path, content_type: ASCII native str."""
-    head = []
-    head.append('%s %s HTTP/1.0\r\n' % (method, path))
-    head.append('Host: %s:%d\r\n' % host)
-    head.append('Content-Type: %s\r\n' % content_type)
-    head.append('Content-Length: %d\r\n' % len(body))
-    head.append('Connection: close\r\n')
-    return ppy.a2b(_EMPTY.join(head)) + body
+    parts = []
+    parts.append('%s %s HTTP/1.0\r\n' % (method, path))
+    parts.append('Host: %s:%d\r\n' % (host, port))
+    parts.append('Content-Type: %s\r\n' % content_type)
+    parts.append('Content-Length: %d\r\n' % len(body))
+    parts.append('Connection: close\r\n')
+    head = ''.join(parts)
+    return ppy.a2b(head) + body
 
 
 def parse_response(data):
@@ -323,6 +324,8 @@ def sync_one(path, sender, offset=0, chunk_size=_PYB_CHUNK_SIZE):
         f.close()
 
 def fake_server_sync(data):
+    # testing http.
+    post_bencode('0.0.0.0', 8000, '/sync', data, 10)
     # fake response: send all of every file.
     manifest = ManifestUnmarshalled(data)
     ppy.prnt('client manifest', manifest.to_debug_str())
