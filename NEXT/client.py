@@ -301,15 +301,13 @@ MAX_DEPTH = 256
 
 # errno values meaning "the name no longer leads anywhere". -1 stands in for
 # a constant the platform lacks; no real errno is negative.
-VANISHED_ERRNOS = (getattr(errno, 'ENOENT', -1),
-                   getattr(errno, 'ENOTDIR', -1))
+VANISHED_ERRNOS = (getattr(errno, 'ENOENT', -1), getattr(errno, 'ENOTDIR', -1))
 DANGLING_ERRNOS = VANISHED_ERRNOS + (getattr(errno, 'ELOOP', -1),)
 
 # Flags for open_for_read(). O_NONBLOCK makes opening a FIFO return at once
 # instead of waiting for a writer; it does not change reads of a regular
 # file. O_BINARY exists only on Windows. Constants a platform lacks are 0.
-READ_FLAGS = (os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) |
-              getattr(os, 'O_BINARY', 0))
+READ_FLAGS = (os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0))
 
 
 def current_errno():
@@ -469,8 +467,7 @@ def matches(pattern, value):
 def decide(kind, relation, place):
     for row in POLICY:
         p = row[0]
-        if matches(p[0], kind) and matches(p[1], relation) and \
-           matches(p[2], place):
+        if matches(p[0], kind) and matches(p[1], relation) and matches(p[2], place):
             return row[1]
     return 'skip'
 
@@ -483,14 +480,8 @@ def _classify_and_decide(cursor, allowed_devs, ancestors):
     path = os.path.join(*cursor)
     classified = classify_entry(path)
     target = classified['target']
-    action = decide(classified['kind'],
-                    fs_relation(target, allowed_devs),
-                    ancestry(target, ancestors))
-    return (action,
-            classified['kind'],
-            classified['lst'],
-            target,
-            classified['err'])
+    action = decide(classified['kind'], fs_relation(target, allowed_devs), ancestry(target, ancestors))
+    return (action, classified['kind'], classified['lst'], target, classified['err'])
 def classify_and_decide(cursor, allowed_devs, ancestors):
     t = _classify_and_decide(cursor, allowed_devs, ancestors)
     return {
@@ -574,16 +565,15 @@ def is_still_dir(dir_path, expected):
 def crawl_tree(root):
     allowed_devs = allowed_devs_for_roots([root])
     ppy.prnt('allowed_devs', allowed_devs)
-    # Each pending item: (cursor, ancestors, expected_stat). Stack: depth-first.
-    pending_dirs = [([root], [dir_key(os.stat(root))], None)]
+    # Each pending item: {cursor, ancestors, expected}. Stack: depth-first.
+    pending_dirs = [{'cursor': [root], 'ancestors': [dir_key(os.stat(root))], 'expected': None}]
     while len(pending_dirs) > 0:
         item = pending_dirs.pop()
-        cursor = item[0]
-        ancestors = item[1]
+        cursor = item['cursor']
+        ancestors = item['ancestors']
         dir_path = os.path.join(*cursor)
-        if not is_still_dir(dir_path, item[2]):
-            ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %s' % (
-                dir_path,))
+        if not is_still_dir(dir_path, item['expected']):
+            ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %s' % (dir_path,))
             continue
         cur_digest = Digest()
         entries = []
@@ -601,11 +591,7 @@ def crawl_tree(root):
                 ppy.prnt('???', action, entry_path)
                 if action == 'descend':
                     target = classification['target']
-                    pending_dirs.append(
-                        (cursor[:],
-                         ancestors + [dir_key(target)],
-                         target)
-                        )
+                    pending_dirs.append({'cursor': cursor[:], 'ancestors': ancestors + [dir_key(target)], 'expected': target})
                 elif action == 'read':
                     cur_digest.add_file(cursor[:], classification)
                 elif action != 'skip':
@@ -613,8 +599,7 @@ def crawl_tree(root):
             except (IOError, OSError):
                 # One bad entry must not end the whole crawl: log, go on.
                 pe = ppy.current_exception()
-                ppy.prntlog(ppy.PPY_ERROR, 'entry failed %s: %s' % (
-                    entry_path, pe))
+                ppy.prntlog(ppy.PPY_ERROR, 'entry failed %s: %s' % (entry_path, pe))
             cursor.pop()
         ppy.prnt('---', dir_path, cur_digest.entries)
         sync_digest(cur_digest)
