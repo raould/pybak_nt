@@ -105,17 +105,16 @@ class Digest:
         ppy.prnt('cursor', str(cursor))
         try:
             path = os.path.join(*cursor)
-            opened = open_for_read(path, classification[3])
-            fp = opened[0]
+            opened = open_for_read(path, classification['target'])
+            fp = opened['fp']
             if fp is None:
-                raise IOError("could not read file: %s errno %s" % (
-                    opened[2], opened[3]))
+                raise IOError("could not read file: %s errno %s" % (opened['state'], opened['err']))
             try:
                 md5_bytes, length = md5_and_length(fp)
             finally:
                 fp.close()
             # lstat: the entry as classified. stat: the object actually read.
-            metadata = {'lstat': classification[2], 'stat': opened[1]}
+            metadata = {'lstat': classification['lst'], 'stat': opened['st']}
             ppy.prnt('md5', md5_bytes)
             ppy.prnt('length', length)
             e = {}
@@ -153,14 +152,13 @@ def fake_sender(path, chunk, pos):
 
 def sync_one(path, sender, offset=0, chunk_size=_PYB_CHUNK_SIZE):
     classified = classify_entry(path)
-    if classified[0] != 'file' and classified[0] != 'link-file':
+    if classified['kind'] != 'file' and classified['kind'] != 'link-file':
         ppy.prntlog(ppy.PPY_WARN, 'not a file any more, not sent: %s' % (path,))
         return
-    opened = open_for_read(path, classified[2])
-    f = opened[0]
+    opened = open_for_read(path, classified['target'])
+    f = opened['fp']
     if f is None:
-        ppy.prntlog(ppy.PPY_WARN, 'could not open, not sent: %s %s errno %s' % (
-            path, opened[2], opened[3]))
+        ppy.prntlog(ppy.PPY_WARN, 'could not open, not sent: %s %s errno %s' % (path, opened['state'], opened['err']))
         return
     pos = offset
     try:
@@ -363,7 +361,7 @@ def kind_for_target_error(err):
     return 'error'
 
 
-def classify_entry(path):
+def _classify_entry(path):
     """Return (kind, lstat_result, target_stat, errno) for one entry.
     target_stat is what the crawler would read or descend into: the lstat
     result for non-links, the followed os.stat result for links, and None
@@ -384,7 +382,14 @@ def classify_entry(path):
         err = current_errno()
         return (kind_for_target_error(err), lst, None, err)
     return ('link-' + kind_of_mode(target[stat.ST_MODE]), lst, target, None)
-
+def classify_entry(path):
+    t = _classify_entry(path)
+    return {
+        'kind': t[0],
+        'lst': t[1],
+        'target': t[2],
+        'err': t[3]
+        }
 
 # ---------------------------------------------------------------------------
 # Relation: is the target on one of the allowed devices?
@@ -470,18 +475,31 @@ def decide(kind, relation, place):
     return 'skip'
 
 
-def classify_and_decide(cursor, allowed_devs, ancestors):
+def _classify_and_decide(cursor, allowed_devs, ancestors):
     """One call per entry: returns (action, kind, lstat, target_stat, errno).
     ancestors: the dir keys from the crawl root down to the directory that
     holds this entry (see the vocabulary), NOT the path names.
     """
     path = os.path.join(*cursor)
     classified = classify_entry(path)
-    target = classified[2]
-    action = decide(classified[0], fs_relation(target, allowed_devs),
+    target = classified['target']
+    action = decide(classified['kind'],
+                    fs_relation(target, allowed_devs),
                     ancestry(target, ancestors))
-    return (action, classified[0], classified[1], target, classified[3])
-
+    return (action,
+            classified['kind'],
+            classified['lst'],
+            target,
+            classified['err'])
+def classify_and_decide(cursor, allowed_devs, ancestors):
+    t = _classify_and_decide(cursor, allowed_devs, ancestors)
+    return {
+        'action': t[0],
+        'kind': t[1],
+        'lst': t[2],
+        'target': t[3],
+        'err': t[4]
+        }
 
 # ---------------------------------------------------------------------------
 # Reading: open what was classified, and only that.
@@ -501,7 +519,7 @@ def is_safe_stat(a, b):
     return 1
 
 
-def open_for_read(path, target_stat):
+def _open_for_read(path, target_stat):
     """Open a file the policy said to 'read', without trusting the name.
 
     Between classification and open, the name can be replaced by a FIFO
@@ -529,7 +547,14 @@ def open_for_read(path, target_stat):
         os.close(fd)
         return (None, st, 'changed', None)
     return (os.fdopen(fd, 'rb'), st, None, None)
-
+def open_for_read(path, target_stat):
+    t = _open_for_read(path, target_stat)
+    return {
+        'fp': t[0],
+        'st': t[1],
+        'state': t[2],
+        'err': t[3]
+        }
 #----------------------------------------
 
 
@@ -544,7 +569,7 @@ def is_still_dir(dir_path, expected):
     if expected is None:
         return 1
     now = classify_entry(dir_path)
-    return now[0] == 'dir' and is_safe_stat(now[2], expected)
+    return now['kind'] == 'dir' and is_safe_stat(now['target'], expected)
 
 def crawl_tree(root):
     allowed_devs = allowed_devs_for_roots([root])
@@ -571,15 +596,16 @@ def crawl_tree(root):
             cursor.append(entry)
             entry_path = os.path.join(*cursor)
             try:
-                classification = classify_and_decide(cursor, allowed_devs,
-                                                     ancestors)
-                action = classification[0]
+                classification = classify_and_decide(cursor, allowed_devs, ancestors)
+                action = classification['action']
                 ppy.prnt('???', action, entry_path)
                 if action == 'descend':
-                    target = classification[3]
-                    pending_dirs.append((cursor[:],
-                                         ancestors + [dir_key(target)],
-                                         target))
+                    target = classification['target']
+                    pending_dirs.append(
+                        (cursor[:],
+                         ancestors + [dir_key(target)],
+                         target)
+                        )
                 elif action == 'read':
                     cur_digest.add_file(cursor[:], classification)
                 elif action != 'skip':
