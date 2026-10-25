@@ -44,14 +44,14 @@ Timeouts need socket.settimeout (Python 2.3+). On older versions timeout_seconds
 is ignored and a dead server can block the client.
 """
 
-_CRLF = ppy.a2b('\r\n')
-_HEADER_END = ppy.a2b('\r\n\r\n')
-_SPACE = ppy.a2b(' ')
-_COLON = ppy.a2b(':')
-_EMPTY = ppy.a2b('')
-_CONTENT_LENGTH = ppy.a2b('content-length')
-_TRANSFER_ENCODING = ppy.a2b('transfer-encoding')
-_RECV_SIZE = 65536
+_HTTP_CRLF = ppy.a2b('\r\n')
+_HTTP_HEADER_END = ppy.a2b('\r\n\r\n')
+_HTTP_SPACE = ppy.a2b(' ')
+_HTTP_COLON = ppy.a2b(':')
+_HTTP_EMPTY = ppy.a2b('')
+_HTTP_CONTENT_LENGTH = ppy.a2b('content-length')
+_HTTP_TRANSFER_ENCODING = ppy.a2b('transfer-encoding')
+_HTTP_RECV_SIZE = 65536
 
 
 class HttpError(Exception):
@@ -72,11 +72,11 @@ def send_all(sock, data):
 def recv_until_eof(sock):
     parts = []
     while 1:
-        data = sock.recv(_RECV_SIZE)
+        data = sock.recv(_HTTP_RECV_SIZE)
         if not data:
             break
         parts.append(data)
-    return _EMPTY.join(parts)
+    return _HTTP_EMPTY.join(parts)
 
 
 def build_request(host, port, method, path, body, content_type):
@@ -93,25 +93,25 @@ def build_request(host, port, method, path, body, content_type):
 
 def parse_response(data):
     """Raw response bytes -> {'status': int, 'headers': {lowercased bytes: bytes}, 'body': bytes}."""
-    end = data.find(_HEADER_END)
+    end = data.find(_HTTP_HEADER_END)
     if end < 0:
         raise HttpError("no end of headers in response (%d bytes)" % len(data))
-    lines = data[:end].split(_CRLF)
-    status_parts = lines[0].split(_SPACE)
+    lines = data[:end].split(_HTTP_CRLF)
+    status_parts = lines[0].split(_HTTP_SPACE)
     if len(status_parts) < 2:
         raise HttpError("bad status line")
     status = int(ppy.b2a(status_parts[1]))
     headers = {}
     for line in lines[1:]:
-        colon = line.find(_COLON)
+        colon = line.find(_HTTP_COLON)
         if colon < 0:
             continue
         headers[line[:colon].strip().lower()] = line[colon + 1:].strip()
     # headers.get(): 'in' on a dict needs 2.2+, and the old method is gone in 3.
-    if headers.get(_TRANSFER_ENCODING) is not None:
+    if headers.get(_HTTP_TRANSFER_ENCODING) is not None:
         raise HttpError("transfer encoding not supported")
-    body = data[end + len(_HEADER_END):]
-    content_length = headers.get(_CONTENT_LENGTH)
+    body = data[end + len(_HTTP_HEADER_END):]
+    content_length = headers.get(_HTTP_CONTENT_LENGTH)
     if content_length is not None:
         length = int(ppy.b2a(content_length))
         if len(body) < length:
