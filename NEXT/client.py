@@ -86,7 +86,7 @@ def build_request(host, port, method, path, body, content_type):
     parts.append('Host: %s:%d\r\n' % (host, port))
     parts.append('Content-Type: %s\r\n' % content_type)
     parts.append('Content-Length: %d\r\n' % len(body))
-    parts.append('Connection: close\r\n')
+    parts.append('Connection: close\r\n\r\n')
     head = ''.join(parts)
     return ppy.a2b(head) + body
 
@@ -135,12 +135,17 @@ def http_request(host, port, method, path, body, content_type, timeout_seconds):
     return parse_response(data)
 
 
-def post_bencode(host, port, path, value, timeout_seconds):
-    """POST a bencoded value, return the decoded bencode reply. Non-200 raises HttpError."""
-    r = http_request(host, port, 'POST', path, ppy.bencode(value), 'application/x-bencode', timeout_seconds)
+def post_data(host, port, path, value, timeout_seconds):
+    """POST data, return the reply. Non-200 raises HttpError."""
+    r = http_request(host, port, 'POST', path, value, 'application/x-bencode', timeout_seconds)
     if r['status'] != 200:
         raise HttpError("HTTP %d from %s: %r" % (r['status'], path, r['body'][:200]))
-    return ppy.bdecode(r['body'])
+    return r['body']
+
+def post_data_bencoded(host, port, path, value, timeout_seconds):
+    bv = ppy.bencode(value)
+    body = post_data(host, port, path, bc, timeout_seconds)
+    return ppy.bdecode(body)
 
 
 
@@ -211,9 +216,13 @@ def stat_for_server(st):
     return fields
 
 def meta_stats_for_server(meta):
+    """only copy over what we really need to send."""
     m = {}
-    m[ppy.bkey('stat')] = stat_for_server(meta['stat'])
-    m[ppy.bkey('lstat')] =  stat_for_server(meta['lstat'])
+    try:
+        m[ppy.bkey('stat')] = stat_for_server(meta['stat'])
+    except KeyError:
+        pass
+    m[ppy.bkey('lstat')] = stat_for_server(meta['lstat'])
     return m
 
 def get_manifest_entry_sort_key(e):
@@ -243,7 +252,11 @@ class Manifest:
             finally:
                 fp.close()
             ppy.prnt(cursor[:-1], 'length', length, 'md5', md5_bytes)
-            file_metadata = {'lstat': classification['lst'], 'stat': opened['st']}
+            lstat = classification['lst']
+            stat = opened['st']
+            file_metadata = { 'lstat': lstat }
+            if lstat != stat:
+                file_metadata['stat'] = stat
             e = {}
             ppy.bd_add(e, 'hexl_path', hexlify_list(cursor))
             ppy.bd_add(e, 'md5', binascii.hexlify(md5_bytes))
@@ -325,7 +338,7 @@ def sync_one(path, sender, offset=0, chunk_size=_PYB_CHUNK_SIZE):
 
 def fake_server_sync(data):
     # testing http.
-    post_bencode('0.0.0.0', 8000, '/sync', data, 10)
+    post_data('0.0.0.0', 8000, '/sync', data, 10)
     # fake response: send all of every file.
     manifest = ManifestUnmarshalled(data)
     ppy.prnt('client manifest', manifest.to_debug_str())
