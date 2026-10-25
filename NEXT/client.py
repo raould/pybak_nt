@@ -19,6 +19,34 @@ _PYB_CHUNK_SIZE=1024*1024
 # - we are using bencode for marshalling, which is quite invasive, because
 # we are painted into a corner by having to support Python 2.0 - Python 3.x.
 
+# ---------------------------------------------------------------------------
+
+#----------------------------------------
+# support MD5 file hashing.
+try:
+    #portapy_pragma ALLOW_MODULE
+    import hashlib
+    # tood: would want usedforsecurity=False (Python 3.9+) on FIPS systems
+    hasher_new = hashlib.md5
+    #portapy_pragma ALLOW_MODULE_END hashlib
+except ImportError:
+    #portapy_pragma ALLOW_MODULE
+    import md5
+    hasher_new = md5.new
+    #portapy_pragma ALLOW_MODULE_END md5
+def md5_and_length(fp, chunk_size=8192):
+    hasher = hasher_new()
+    count = 0
+    while 1:
+        chunk = fp.read(chunk_size)
+        if not chunk:
+            break
+        hasher.update(chunk)
+        count = count + len(chunk)
+    return (hasher.digest(), count)
+
+# ---------------------------------------------------------------------------
+
 def hexlify_list(l):
     h = []
     for e in l:
@@ -30,6 +58,32 @@ def unhexlify_list(l):
         u.append(binascii.unhexlify(e))
     return u
 
+def stat_for_server(st):
+    """os.stat/lstat result -> dict, portable from Python 2.0 to 3.x."""
+    fields = {
+        'mode':  st[stat.ST_MODE],
+        'ino':   st[stat.ST_INO],
+        'dev':   st[stat.ST_DEV],
+        'nlink': st[stat.ST_NLINK],
+        'size':  st[stat.ST_SIZE],
+        'mtime': st[stat.ST_MTIME],      # integer seconds on every version
+        'ctime': st[stat.ST_CTIME],
+    }
+    mtime_ns = getattr(st, 'st_mtime_ns', None)       # 3.3+
+    if mtime_ns is not None:
+        fields['mtime_ns'] = mtime_ns
+    for name in ('st_blocks', 'st_birthtime', 'st_file_attributes'):
+        value = getattr(st, name, None)
+        if value is not None:
+            fields[name[3:]] = value
+    return fields
+
+def meta_stats_for_server(meta):
+    m = {}
+    m['stat'] = stat_for_server(meta['stat'])
+    m['lstat'] =  stat_for_server(meta['lstat'])
+    return m
+
 def get_digest_entry_sort_key(e):
     return e[ppy.bkey('length')]
 class Digest:
@@ -37,19 +91,25 @@ class Digest:
         self.entries = entries or [] # public!
     def to_debug_str(self):
         return str(self.entries)
-    def add_file(self, cursor, bmetadata):
+    def add_file(self, cursor, metadata):
         """ if access is denied to path, it won't be entered into the digest. """
         ppy.prnt('cursor', str(cursor))
+        ppy.prnt('metadata', str(metadata))
         try:
-            md5, length = ppy.md5_and_length(os.path.join(*cursor))
+            path = os.path.join(*cursor)
+            (fp, _, _, _) = open_for_read(path, metadata['stat'])
+            if fp is None:
+                raise IOError("could not read file")
+            md5, length = md5_and_length(fp)
+            fp.close()
             ppy.prnt('md5', md5)
             ppy.prnt('length', length)
             e = {}
-            ppy.bd_add(e, 'path', os.path.join(*cursor))
+            ppy.bd_add(e, 'path', path)
             ppy.bd_add(e, 'hexl_path', hexlify_list(cursor))
             ppy.bd_add(e, 'md5', binascii.hexlify(md5))
             ppy.bd_add(e, 'length', length)
-            ppy.bd_add(e, 'metadata', bmetadata or {})
+            ppy.bd_add(e, 'metadata', ppy.dict_to_bd(meta_stats_for_server(metadata)))
             self.entries.append(e)
         except (IOError, OSError): # PermissionError
             traceback.print_exc()
@@ -404,7 +464,7 @@ def classify_and_decide(cursor, allowed_devs):
 # ---------------------------------------------------------------------------
 # Reading: open what was classified, and only that.
 
-def same_object(a, b):
+def is_safe_stat(a, b):
     """True if two stat results describe the same object, as far as the
     platform can tell. A 0 st_dev or st_ino (Python 2 on Windows) is not
     compared."""
@@ -443,20 +503,23 @@ def open_for_read(path, target_stat):
         err = current_errno()
         os.close(fd)
         return (None, None, 'error', err)
-    if not stat.S_ISREG(st[stat.ST_MODE]) or not same_object(st, target_stat):
+    if not stat.S_ISREG(st[stat.ST_MODE]) or not is_safe_stat(st, target_stat):
         os.close(fd)
         return (None, st, 'changed', None)
     return (os.fdopen(fd, 'rb'), st, None, None)
 
 #----------------------------------------
 
+
+#----------------------------------------
+
 def get_metadata(entry_path):
-    bmeta = {}
+    metadata = {}
     st = os.stat(entry_path)
-    is_reg = stat.S_ISREG(st[stat.ST_MODE])
-    ppy.bd_add(bmeta, 'stat', ppy.bmeta_stat(st))
-    ppy.bd_add(bmeta, 'lstat', ppy.bmeta_stat(os.lstat(entry_path)))
-    return bmeta
+    metadata['stat'] = st
+    lst = os.lstat(entry_path)
+    metadata['lstat'] = lst
+    return metadata
 
 def crawl_tree(root):
     allowed_devs = allowed_devs_for_roots([root])
@@ -485,8 +548,8 @@ def crawl_tree(root):
                     if action == 'descend':
                         pending_dirs.append(cursor[:])
                     elif action == 'read':
-                        bmeta = get_metadata(entry_path)
-                        cur_digest.add_file(cursor[:], bmeta)
+                        metadata = get_metadata(entry_path)
+                        cur_digest.add_file(cursor[:], metadata)
                     else:
                         raise Exception(action)
             except (IOError, OSError):
