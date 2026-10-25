@@ -18,30 +18,7 @@ import copy
 import hexlpathutil
 import re
 import visit_core
-
-LATEST_VERSION=10 # todo: fix how versioning is even done :-(
-UNKNOWN_VALUE='unknown_value' # hopefully no e.g. hosts we crawl are called that.
-RAW_BYTES_ENCODING='RAW_BYTES' # see CustomEncodings.java
-DEFAULT_ENCODING=RAW_BYTES_ENCODING
-RUNTIME_MIGRATED_KEY='runtime_migrated' # do not include in de/seriailzation.
-STASHED_KEY='stashed'
-VERSION_KEY='version'
-PATHS_KEY='paths'
-HOSTS_KEY='hosts'
-LAST_UPDATE_SEC_KEY='last-update-sec'
-OLDEST_TIMESTAMP_KEY='oldest-timestamp'
-EXE_KEY='exe'
-FILEPATH_PARTS_KEY='filepath_parts'
-DEPRECATED_FILEPATH_ENCODING_KEY='filepath_encoding'
-PY_FILEPATH_ENCODING_KEY='py_filepath_encoding'
-PY_PLATFORM_SYSTEM_KEY='py_platform_system'
-PY_PLATFORM_UNAME_KEY='py_platform_uname'
-PY_BYTEORDER_KEY='py_byteorder'
-PY_PATH_SEP_KEY='py_path_sep'
-PICKLE_DOTEXT='.metadata'
-JSON_DOTEXT='.mdj'
-DEFAULT_PATH_SEP='/'
-ASCII_PATH='ascii_path'
+import metadata_constants as mdc
 
 # new metadata schema is a dict like this example:
 # (see previous 'new' schema below)

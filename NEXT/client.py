@@ -17,6 +17,8 @@ import client_util
 import wanted_sync
 #portapy_pragma ALLOW_MODULE
 import http_client
+#portapy_pragma ALLOW_MODULE
+import smells
 
 _PYB_CHUNK_SIZE=1024*1024
 name_kind, root_to_native, name_to_bytes, bytes_to_name = naming.choose_naming_T()
@@ -160,7 +162,7 @@ def sync_one(path, sender, offset=0, chunk_size=_PYB_CHUNK_SIZE):
 
 def fake_server_sync(data):
     # testing http.
-    http_client.post_data('0.0.0.0', 8000, '/sync', data, 10)
+    # http_client.post_data('0.0.0.0', 8000, '/sync', data, 10)
 
     # fake response: send all of every file.
     manifest = ManifestUnmarshalled(data)
@@ -454,6 +456,13 @@ def classify_and_decide_T(cursor, allowed_devs, ancestors):
     classified = classify_entry(path)
     target = classified['target']
     action = decide(classified['kind'], fs_relation(target, allowed_devs), ancestry(target, ancestors))
+
+    # avoid archiving existing archives.
+    if smells.smells_like_canonical(path) or \
+        smells.smells_like_browse(path) or \
+        smells.smells_like_any_metadata(path):
+        action = 'skip'
+
     return (action, classified['kind'], classified['lst'], target, classified['err'])
 def classify_and_decide(cursor, allowed_devs, ancestors):
     t = classify_and_decide_T(cursor, allowed_devs, ancestors)
