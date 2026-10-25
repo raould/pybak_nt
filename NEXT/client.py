@@ -94,16 +94,20 @@ def meta_stats_for_server(meta):
     m[ppy.a2b('lstat')] =  stat_for_server(meta['lstat'])
     return m
 
-def get_digest_entry_sort_key(e):
+def get_manifest_entry_sort_key(e):
     return e[ppy.bkey('hexl_path')]
-class Digest:
+class Manifest:
     def __init__(self):
         self.entries = []
-        self.name_kind = name_kind
+        self.bmetadata = {}
+        ppy.bd_add(self.bmetadata, 'name_kind', ppy.a2b(name_kind))
+        # todo:
+        # filesystemencoding
+        # et. al.
     def to_debug_str(self):
         return "%s %s" % (str(self.name_kind), self.entries)
-    def add_file(self, cursor, classification):
-        """ if the file can't be opened safely, it won't be entered into the digest.
+    def add_file(self, cursor, classification): # "everything is a file" ha ha.
+        """ if the file can't be opened safely, it won't be entered into the manifest.
         classification: the tuple from classify_and_decide() for this entry. """
         ppy.prnt('cursor', str(cursor))
         try:
@@ -116,15 +120,13 @@ class Digest:
                 md5_bytes, length = md5_and_length(fp)
             finally:
                 fp.close()
-            # lstat: the entry as classified. stat: the object actually read.
-            metadata = {'lstat': classification['lst'], 'stat': opened['st']}
-            ppy.prnt('md5', md5_bytes)
-            ppy.prnt('length', length)
+            ppy.prnt(cursor[:-1], 'length', length, 'md5', md5_bytes)
+            file_metadata = {'lstat': classification['lst'], 'stat': opened['st']}
             e = {}
             ppy.bd_add(e, 'hexl_path', hexlify_list(cursor))
             ppy.bd_add(e, 'md5', binascii.hexlify(md5_bytes))
             ppy.bd_add(e, 'length', length)
-            ppy.bd_add(e, 'metadata', meta_stats_for_server(metadata))
+            ppy.bd_add(e, 'metadata', meta_stats_for_server(file_metadata))
             self.entries.append(e)
         except (IOError, OSError): # PermissionError
             traceback.print_exc()
@@ -134,21 +136,26 @@ class Digest:
     def marshall(self):
         # enforce a canonical ordering, to make testing easier.
         bd = {}
-        ppy.bd_add(bd, 'name_kind', ppy.a2b(self.name_kind))
-        sorted = ppy.sorted_list(self.entries, get_digest_entry_sort_key)
+        ppy.bd_add(bd, 'bmetadata', self.bmetadata)
+        sorted = ppy.sorted_list(self.entries, get_manifest_entry_sort_key)
         ppy.bd_add(bd, 'entries', sorted)
         return ppy.bencode(bd)
     def foreach(self, on_entry): # nigh useless w/out lambda support.
         for e in self.entries:
             on_entry(e) # dict of {path, hexl_path, md5, length}
-class DigestUnmarshalled:
+    def get_name_kind(self):
+        return ppy.b2a(self.bmetadata[ppy.a2b('name_kind')])
+
+class ManifestUnmarshalled:
     def __init__(self, data):
         init = ppy.bdecode(data)
         if init is not None:
-            self.name_kind = init[ppy.a2b('name_kind')]
+            self.bmetadata = init[ppy.a2b('bmetadata')]
             self.entries = init[ppy.a2b('entries')]
     def to_debug_str(self):
-        return "%s %s" % (str(self.name_kind), self.entries)
+        return "'%s' %s" % (self.bmetadata, self.entries)
+    def get_name_kind(self):
+        return ppy.b2a(self.bmetadata[ppy.a2b('name_kind')])
 
 class WantedSync:
     def __init__(self, data):
@@ -185,9 +192,9 @@ def sync_one(path, sender, offset=0, chunk_size=_PYB_CHUNK_SIZE):
 def fake_server_sync(data):
     # fake response: send all of every file.
     wanted = []
-    digest = DigestUnmarshalled(data)
-    ppy.prnt('client digest', digest.to_debug_str())
-    for e in digest.entries:
+    manifest = ManifestUnmarshalled(data)
+    ppy.prnt('client manifest', manifest.to_debug_str())
+    for e in manifest.entries:
         w = {}
         w[ppy.bkey('hexl_path')] = e[ppy.bkey('hexl_path')]
         w[ppy.bkey('offset')] = 0
@@ -195,12 +202,12 @@ def fake_server_sync(data):
     ppy.prnt('response', wanted)
     return ppy.bencode(wanted)
 
-def sync_digest(digest):
+def sync_manifest(manifest):
     # 0) add metadata (hostname, sysinfo, os.*, etc.)
-    # 1) send digest to the server.
-    # 2) get back the 'wanted' list (subset of digest).
+    # 1) send manifest to the server.
+    # 2) get back the 'wanted' list (subset of manifest).
     # 3) for each wanted, send it (chunked, with seek) to the server.
-    response = fake_server_sync(digest.marshall())
+    response = fake_server_sync(manifest.marshall())
     ppy.prnt('response', response)
     wanted = ppy.bdecode(response)
     ppy.prnt('wanted', wanted)
@@ -216,6 +223,8 @@ def sync_digest(digest):
 """
 crawl TODOs:
 
+- *** Windows UTF-16 naming (Python 2.3-3.5 on Windows): names are text there, but name_to_bytes from choose_naming() is never used, so hexlify_list fails and the reply's hex paths don't map back to native names. ***
+
 - Skip network mounts too unless they're explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
 
 - handle unbounded & special files.
@@ -223,8 +232,6 @@ crawl TODOs:
 - ignore bad-smelling files (based on filenames, extensions, etc.).
 
 - support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
-
-- Windows UTF-16 naming (Python 2.3-3.5 on Windows): names are text there, but name_to_bytes from choose_naming() is never used, so hexlify_list fails and the reply's hex paths don't map back to native names.
 
 """
 
@@ -573,7 +580,7 @@ def crawl_tree(root):
         if not is_still_dir(dir_path, item['expected']):
             ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %s' % (dir_path,))
             continue
-        cur_digest = Digest()
+        cur_manifest = Manifest()
         entries = []
         try:
             entries = os.listdir(dir_path)
@@ -591,7 +598,7 @@ def crawl_tree(root):
                     target = classification['target']
                     pending_dirs.append({'cursor': cursor[:], 'ancestors': ancestors + [dir_key(target)], 'expected': target})
                 elif action == 'read':
-                    cur_digest.add_file(cursor[:], classification)
+                    cur_manifest.add_file(cursor[:], classification)
                 elif action != 'skip':
                     raise Exception(action)
             except (IOError, OSError):
@@ -599,8 +606,9 @@ def crawl_tree(root):
                 pe = ppy.current_exception()
                 ppy.prntlog(ppy.PPY_ERROR, 'entry failed %s: %s' % (entry_path, pe))
             cursor.pop()
-        ppy.prnt('---', dir_path, cur_digest.entries)
-        sync_digest(cur_digest)
+        ppy.prnt('---', dir_path, cur_manifest.entries)
+        sync_manifest(cur_manifest)
+        break # todo: do not commit this testing hack.
 
 # ----------------------------------------
 # (1) we have to obtain the names of paths + files, and know what their type is.
