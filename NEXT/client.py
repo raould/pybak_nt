@@ -10,6 +10,7 @@ import errno
 
 
 _PYB_CHUNK_SIZE=1024*1024
+name_kind, root_to_native, name_to_bytes = ppy.choose_naming_T()
 
 #
 # a new pybak client, for ('any' OS) x (any Python version 2.0+).
@@ -50,7 +51,8 @@ def md5_and_length(fp, chunk_size=8192):
 def hexlify_list(l):
     h = []
     for e in l:
-        h.append(binascii.hexlify(e))
+        b = name_to_bytes(e)
+        h.append(binascii.hexlify(b))
     return h
 def unhexlify_list(l):
     u = []
@@ -95,10 +97,11 @@ def meta_stats_for_server(meta):
 def get_digest_entry_sort_key(e):
     return e[ppy.bkey('hexl_path')]
 class Digest:
-    def __init__(self, entries=None):
-        self.entries = entries or [] # public!
+    def __init__(self):
+        self.entries = []
+        self.name_kind = name_kind
     def to_debug_str(self):
-        return str(self.entries)
+        return "%s %s" % (str(self.name_kind), self.entries)
     def add_file(self, cursor, classification):
         """ if the file can't be opened safely, it won't be entered into the digest.
         classification: the tuple from classify_and_decide() for this entry. """
@@ -130,15 +133,22 @@ class Digest:
             ppy.prntlog(ppy.PPY_ERROR, type(cursor))
     def marshall(self):
         # enforce a canonical ordering, to make testing easier.
+        bd = {}
+        ppy.bd_add(bd, 'name_kind', ppy.a2b(self.name_kind))
         sorted = ppy.sorted_list(self.entries, get_digest_entry_sort_key)
-        return ppy.bencode(sorted)
+        ppy.bd_add(bd, 'entries', sorted)
+        return ppy.bencode(bd)
     def foreach(self, on_entry): # nigh useless w/out lambda support.
         for e in self.entries:
             on_entry(e) # dict of {path, hexl_path, md5, length}
-class DigestFactory:
-    def unmarshall(self, data):
-        body = ppy.bdecode(data)
-        return Digest(body)
+class DigestUnmarshalled:
+    def __init__(self, data):
+        init = ppy.bdecode(data)
+        if init is not None:
+            self.name_kind = init[ppy.a2b('name_kind')]
+            self.entries = init[ppy.a2b('entries')]
+    def to_debug_str(self):
+        return "%s %s" % (str(self.name_kind), self.entries)
 
 class WantedSync:
     def __init__(self, data):
@@ -175,7 +185,7 @@ def sync_one(path, sender, offset=0, chunk_size=_PYB_CHUNK_SIZE):
 def fake_server_sync(data):
     # fake response: send all of every file.
     wanted = []
-    digest = DigestFactory().unmarshall(data)
+    digest = DigestUnmarshalled(data)
     ppy.prnt('client digest', digest.to_debug_str())
     for e in digest.entries:
         w = {}
@@ -213,6 +223,8 @@ crawl TODOs:
 - ignore bad-smelling files (based on filenames, extensions, etc.).
 
 - support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
+
+- Windows UTF-16 naming (Python 2.3-3.5 on Windows): names are text there, but name_to_bytes from choose_naming() is never used, so hexlify_list fails and the reply's hex paths don't map back to native names.
 
 """
 
@@ -345,7 +357,7 @@ def kind_for_target_error(err):
     return 'error'
 
 
-def _classify_entry(path):
+def classify_entry_T(path):
     """Return (kind, lstat_result, target_stat, errno) for one entry.
     target_stat is what the crawler would read or descend into: the lstat
     result for non-links, the followed os.stat result for links, and None
@@ -367,7 +379,7 @@ def _classify_entry(path):
         return (kind_for_target_error(err), lst, None, err)
     return ('link-' + kind_of_mode(target[stat.ST_MODE]), lst, target, None)
 def classify_entry(path):
-    t = _classify_entry(path)
+    t = classify_entry_T(path)
     return {
         'kind': t[0],
         'lst': t[1],
@@ -458,7 +470,7 @@ def decide(kind, relation, place):
     return 'skip'
 
 
-def _classify_and_decide(cursor, allowed_devs, ancestors):
+def classify_and_decide_T(cursor, allowed_devs, ancestors):
     """One call per entry: returns (action, kind, lstat, target_stat, errno).
     ancestors: the dir keys from the crawl root down to the directory that
     holds this entry (see the vocabulary), NOT the path names.
@@ -469,7 +481,7 @@ def _classify_and_decide(cursor, allowed_devs, ancestors):
     action = decide(classified['kind'], fs_relation(target, allowed_devs), ancestry(target, ancestors))
     return (action, classified['kind'], classified['lst'], target, classified['err'])
 def classify_and_decide(cursor, allowed_devs, ancestors):
-    t = _classify_and_decide(cursor, allowed_devs, ancestors)
+    t = classify_and_decide_T(cursor, allowed_devs, ancestors)
     return {
         'action': t[0],
         'kind': t[1],
@@ -496,7 +508,7 @@ def is_safe_stat(a, b):
     return 1
 
 
-def _open_for_read(path, target_stat):
+def open_for_read_T(path, target_stat):
     """Open a file the policy said to 'read', without trusting the name.
 
     Between classification and open, the name can be replaced by a FIFO
@@ -525,7 +537,7 @@ def _open_for_read(path, target_stat):
         return (None, st, 'changed', None)
     return (os.fdopen(fd, 'rb'), st, None, None)
 def open_for_read(path, target_stat):
-    t = _open_for_read(path, target_stat)
+    t = open_for_read_T(path, target_stat)
     return {
         'fp': t[0],
         'st': t[1],
@@ -597,7 +609,6 @@ if __name__ == '__main__':
     ppy.prnt(','.join(sys.argv))
     if len(sys.argv) == 1:
         raise Exception('required argument: directory to crawl')
-    name_kind, root_to_native, name_to_raw = ppy.choose_naming()
     start_dir = root_to_native(sys.argv[1])
     ppy.prnt('start_dir', start_dir, os.path.isdir(start_dir))
     if not os.path.isdir(start_dir):
