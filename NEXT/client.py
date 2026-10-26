@@ -4,24 +4,23 @@ import os
 import stat
 import traceback
 #portapy_pragma ALLOW_MODULE
-import binascii
-#portapy_pragma ALLOW_MODULE
-import errno
-#portapy_pragma ALLOW_MODULE
-import socket
-#portapy_pragma ALLOW_MODULE
 import naming
 #portapy_pragma ALLOW_MODULE
-import client_util
+import pk_types as pk
 #portapy_pragma ALLOW_MODULE
-import wanted_sync
+import client_util as cu
+#portapy_pragma ALLOW_MODULE
+import wanted_sync as ws
 #portapy_pragma ALLOW_MODULE
 import http_client
 #portapy_pragma ALLOW_MODULE
 import smells
 
 _PYB_CHUNK_SIZE=1024*1024
-name_kind, root_to_native, name_to_bytes, bytes_to_name = naming.choose_naming_T()
+
+# The naming strategy is chosen once, in main, and passed to everything that
+# touches a name or path as N (pk.PkNamingP). Those functions are generic over
+# pk.PkOsName, so mypy checks them once for bytes names and once for text names.
 
 #
 # a new pybak client, for ('any' OS) x (any Python version 2.0+).
@@ -34,16 +33,18 @@ name_kind, root_to_native, name_to_bytes, bytes_to_name = naming.choose_naming_T
 # ---------------------------------------------------------------------------
 
 def stat_for_server(st):
+    # type: (pk.PkStat) -> ppy.PpyBDict
     """os.stat/lstat result -> dict, portable from Python 2.0 to 3.x."""
-    fields = {
-        ppy.bkey('mode'):  st[stat.ST_MODE],
-        ppy.bkey('ino'):   st[stat.ST_INO],
-        ppy.bkey('dev'):   st[stat.ST_DEV],
-        ppy.bkey('nlink'): st[stat.ST_NLINK],
-        ppy.bkey('size'):  st[stat.ST_SIZE],
-        ppy.bkey('mtime'): st[stat.ST_MTIME],      # integer seconds on every version
-        ppy.bkey('ctime'): st[stat.ST_CTIME],
-    }
+    fields = {}  # type: ppy.PpyBDict
+    fields[ppy.bkey('mode')] = st[stat.ST_MODE]
+    fields[ppy.bkey('ino')] = st[stat.ST_INO]
+    fields[ppy.bkey('dev')] = st[stat.ST_DEV]
+    fields[ppy.bkey('nlink')] = st[stat.ST_NLINK]
+    fields[ppy.bkey('size')] = st[stat.ST_SIZE]
+    # Indexing gives integer seconds on every version (only the st_mtime attribute
+    # can be a float); int() makes that explicit, since bencode has no floats.
+    fields[ppy.bkey('mtime')] = int(st[stat.ST_MTIME])
+    fields[ppy.bkey('ctime')] = int(st[stat.ST_CTIME])
     mtime_ns = getattr(st, 'st_mtime_ns', None)       # 3.3+
     if mtime_ns is not None:
         fields[ppy.bkey('mtime_ns')] = mtime_ns
@@ -62,138 +63,151 @@ def stat_for_server(st):
     return fields
 
 def meta_stats_for_server(meta):
+    # type: (pk.PkFileMetadata) -> ppy.PpyBDict
     """only copy over what we really need to send."""
-    m = {}
-    try:
-        m[ppy.bkey('stat')] = stat_for_server(meta['stat'])
-    except KeyError:
-        pass
+    m = {}  # type: ppy.PpyBDict
+    st = meta['stat']
+    if st is not None:      # only sent when it differs from lstat
+        m[ppy.bkey('stat')] = stat_for_server(st)
     m[ppy.bkey('lstat')] = stat_for_server(meta['lstat'])
     return m
 
 def get_manifest_entry_sort_key(e):
+    # type: (ppy.PpyBDict) -> ppy.PpyBValue
     return e[ppy.bkey('hexl_path')]
 class Manifest:
-    def __init__(self):
-        self.entries = []
-        self.bmetadata = {}
-        ppy.bd_add(self.bmetadata, 'name_kind', ppy.bkey(name_kind))
+    def __init__(self, name_kind):
+        # type: (pk.PkNameKind) -> None
+        self.entries = []  # type: pk.PkList[ppy.PpyBDict]
         # todo:
-        # filesystemencoding
-        # et. al.
+        # all the metadata that is true for the whole directory:
+        # naming kind, filesystemencoding, et. al.
+        self.bmetadata = {}  # type: ppy.PpyBDict
+        ppy.bd_add(self.bmetadata, 'name_kind', ppy.a2b(name_kind))
+    def get_name_kind(self):
+        # type: () -> ppy.PpyAsciiStr
+        return ppy.b2a(ppy.bd_get_bytes(self.bmetadata, 'name_kind'))
     def to_debug_str(self):
-        return "%s %s" % (str(self.name_kind), self.entries)
-    def add_file(self, cursor, classification): # "everything is a file" ha ha.
+        # type: () -> str
+        return "%s %s" % (self.get_name_kind(), self.entries)
+    def add_file(self, path_list, classification, N): # "everything is a file" ha ha.
+        # type: (pk.PkOsPath[pk.PkOsName], pk.PkClassification, pk.PkNamingP[pk.PkOsName]) -> None
         """ if the file can't be opened safely, it won't be entered into the manifest.
-        classification: the tuple from classify_and_decide() for this entry. """
-        ppy.prnt('cursor', str(cursor))
+        classification: the dict from classify_and_decide() for this entry. """
+        ppy.prnt('path', N.os_join_path(path_list))
         try:
-            path = os.path.join(*cursor)
-            opened = open_for_read(path, classification['target'])
+            target = classification['target']
+            lst = classification['lst']
+            if target is None or lst is None:
+                raise IOError("no stat for a file classified as readable")
+            opened = cu.open_for_read(path_list, target, N)
             fp = opened['fp']
-            if fp is None:
+            st = opened['st']
+            if fp is None or st is None:
                 raise IOError("could not read file: %s errno %s" % (opened['state'], opened['err']))
             try:
-                md5_bytes, length = client_util.md5_and_length(fp)
+                md5_bytes, length = cu.md5_and_length(fp, 8192)
             finally:
                 fp.close()
-            ppy.prnt(cursor[:-1], 'length', length, 'md5', md5_bytes)
-            lstat = classification['lst']
-            stat = opened['st']
-            file_metadata = { 'lstat': lstat }
-            if lstat != stat:
-                file_metadata['stat'] = stat
-            e = {}
-            ppy.bd_add(e, 'hexl_path', client_util.hexlify_list(cursor, name_to_bytes))
-            ppy.bd_add(e, 'md5', binascii.hexlify(md5_bytes))
+            ppy.prnt(N.os_join_path(path_list), 'length', length, 'md5', md5_bytes)
+            file_metadata = { 'lstat': lst, 'stat': None }  # type: pk.PkFileMetadata
+            if lst != st:
+                file_metadata['stat'] = st
+            e = {}  # type: ppy.PpyBDict
+            ppy.bd_add(e, 'hexl_path', cu.to_hex_path_list(path_list, N))
+            ppy.bd_add(e, 'md5', cu.md5_hex(md5_bytes))
             ppy.bd_add(e, 'length', length)
             ppy.bd_add(e, 'metadata', meta_stats_for_server(file_metadata))
             self.entries.append(e)
         except (IOError, OSError): # PermissionError
             traceback.print_exc()
-            e = ppy.current_exception()
-            ppy.prntlog(ppy.PPY_ERROR, str(e))
-            ppy.prntlog(ppy.PPY_ERROR, type(cursor))
+            err = ppy.current_exception()
+            ppy.prntlog(ppy.PPY_ERROR, str(err))
+            ppy.prntlog(ppy.PPY_ERROR, repr(N.os_join_path(path_list)))
     def marshall(self):
+        # type: () -> ppy.PpyBencoded
         # enforce a canonical ordering, to make testing easier.
-        bd = {}
+        bd = {}  # type: ppy.PpyBDict
         ppy.bd_add(bd, 'bmetadata', self.bmetadata)
         sorted = ppy.sorted_list(self.entries, get_manifest_entry_sort_key)
         ppy.bd_add(bd, 'entries', sorted)
         return ppy.bencode(bd)
-    def get_name_kind(self):
-        return ppy.b2a(self.bmetadata[ppy.bkey('name_kind')])
 
 class ManifestUnmarshalled:
     def __init__(self, data):
-        init = ppy.bdecode(data)
-        if init is not None:
-            self.bmetadata = init[ppy.bkey('bmetadata')]
-            self.entries = init[ppy.bkey('entries')]
-    def to_debug_str(self):
-        return "'%s' %s" % (self.bmetadata, self.entries)
+        # type: (ppy.PpyBencoded) -> None
+        init = ppy.bv_dict(ppy.bdecode(data))
+        self.bmetadata = ppy.bd_get_dict(init, 'bmetadata')
+        self.entries = []  # type: pk.PkList[ppy.PpyBDict]
+        for e in ppy.bd_get_list(init, 'entries'):
+            self.entries.append(ppy.bv_dict(e))
     def get_name_kind(self):
-        return ppy.b2a(self.bmetadata[ppy.bkey('name_kind')])
+        # type: () -> ppy.PpyAsciiStr
+        return ppy.b2a(ppy.bd_get_bytes(self.bmetadata, 'name_kind'))
+    def to_debug_str(self):
+        # type: () -> str
+        return "'%s' %s" % (self.bmetadata, self.entries)
         
-def fake_sender(path, chunk, pos):
-    ppy.prnt('>>> sending', pos, len(chunk), path)
+def fake_sender(hex_path_list, chunk, pos):
+    # type: (pk.PkHexPath, pk.PkFileBytes, pk.PkOffset) -> None
+    ppy.prnt('>>> sending', pos, len(chunk), hex_path_list)
 
-def sync_one(path, sender, offset=0, chunk_size=_PYB_CHUNK_SIZE):
-    classified = classify_entry(path)
-    if classified['kind'] != 'file' and classified['kind'] != 'link-file':
-        ppy.prntlog(ppy.PPY_WARN, 'not a file any more, not sent: %s' % (path,))
+def sync_one(hex_path_list, sender, offset, chunk_size, N):
+    # type: (pk.PkHexPath, pk.PkSender, pk.PkOffset, int, pk.PkNamingP[pk.PkOsName]) -> None
+    """Send one wanted file from offset. The sender gets the hexl_path, as the server knows it."""
+    path_list = cu.from_hex_path_list(hex_path_list, N)
+    classified = classify_entry(path_list, N)
+    target = classified['target']
+    if (classified['kind'] != 'file' and classified['kind'] != 'link-file') or target is None:
+        ppy.prntlog(ppy.PPY_WARN, 'not a file any more, not sent: %r' % (N.os_join_path(path_list),))
         return
-    opened = open_for_read(path, classified['target'])
+    opened = cu.open_for_read(path_list, target, N)
     f = opened['fp']
     if f is None:
-        ppy.prntlog(ppy.PPY_WARN, 'could not open, not sent: %s %s errno %s' % (path, opened['state'], opened['err']))
+        ppy.prntlog(ppy.PPY_WARN, 'could not open, not sent: %r %s errno %s' % (N.os_join_path(path_list), opened['state'], opened['err']))
         return
     pos = offset
     try:
         f.seek(offset)
         while 1:
-            chunk = f.read(chunk_size)
+            chunk = pk.PkFileBytes(f.read(chunk_size))
             if not chunk:
                 break
-            sender(path, chunk, pos)
-            pos = pos + len(chunk)
+            sender(hex_path_list, chunk, pos)
+            pos = pk.PkOffset(pos + len(chunk))
     finally:
         f.close()
 
 def fake_server_sync(data):
+    # type: (ppy.PpyBencoded) -> ppy.PpyBencoded
     # testing http.
     # http_client.post_data('0.0.0.0', 8000, '/sync', data, 10)
 
     # fake response: send all of every file.
     manifest = ManifestUnmarshalled(data)
     ppy.prnt('client manifest', manifest.to_debug_str())
-    wanted = WantedSync()
+    wanted = ws.WantedSync()
     for e in manifest.entries:
         wanted.add_file(
-            e[ppy.bkey('hexl_path')],
-            0 # todo: server has to introspect storage.
-            )            
+            ws.hex_path_list_from_bd(e),
+            pk.PkOffset(0) # todo: server has to introspect storage.
+            )
     ppy.prnt('response', wanted.to_debug_str())
     return wanted.marshall()
 
-def sync_manifest(manifest):
+def sync_manifest(manifest, N):
+    # type: (Manifest, pk.PkNamingP[pk.PkOsName]) -> None
     # 0) add metadata (hostname, sysinfo, os.*, etc.)
     # 1) send manifest to the server.
     # 2) get back the 'wanted' list (subset of manifest).
     # 3) for each wanted, send it (chunked, with seek) to the server.
     response = fake_server_sync(manifest.marshall())
     ppy.prnt('response', response)
-    wanted = WantedSyncUnmarshalled(response)
+    wanted = ws.WantedSyncUnmarshalled(response)
     ppy.prnt('wanted', wanted.to_debug_str())
     for w in wanted.entries:
-        ppy.prnt('w', w)
-        hexl_path = w[ppy.bkey('hexl_path')]
-        ppy.prnt(hexl_path)
-        cursor = unhexlify_list(hexl_path, bytes_to_name)
-        ppy.prnt(cursor)
-        path = os.path.join(*cursor)
-        offset = w[ppy.bkey('offset')]
-        sync_one(path, fake_sender, offset)
+        ppy.prnt('w', w.hex_path_list, w.offset)
+        sync_one(w.hex_path_list, fake_sender, w.offset, _PYB_CHUNK_SIZE, N)
 
 """
 crawl TODOs:
@@ -274,35 +288,20 @@ FILE_ATTRIBUTE_REPARSE_POINT = 0x400             # Windows, Python 3.5+
 
 MAX_DEPTH = 256
 
-# errno values meaning "the name no longer leads anywhere". -1 stands in for
-# a constant the platform lacks; no real errno is negative.
-VANISHED_ERRNOS = (getattr(errno, 'ENOENT', -1), getattr(errno, 'ENOTDIR', -1))
-DANGLING_ERRNOS = VANISHED_ERRNOS + (getattr(errno, 'ELOOP', -1),)
-
-# Flags for open_for_read(). O_NONBLOCK makes opening a FIFO return at once
-# instead of waiting for a writer; it does not change reads of a regular
-# file. O_BINARY exists only on Windows. Constants a platform lacks are 0.
-READ_FLAGS = (os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0))
-
-
-def current_errno():
-    """errno of the exception being handled, or None.
-    Uses sys.exc_info() because 'except E, e' (Python 2) and
-    'except E as e' (Python 2.6+) have no common spelling.
-    """
-    return getattr(sys.exc_info()[1], 'errno', None)
-
-
 # ---------------------------------------------------------------------------
 # Kind: what an entry is.
 
 def is_link_mode(mode):
+    # type: (int) -> int
     if S_ISLNK is None:
         return 0
-    return S_ISLNK(mode)
+    if S_ISLNK(mode):      # S_ISLNK comes from getattr(), so mypy cannot type its result
+        return 1
+    return 0
 
 
 def is_dir_reparse_point(st):
+    # type: (pk.PkStat) -> int
     """Windows junctions, volume mount points and directory symlinks.
     Only directories count: regular files can be reparse points too
     (OneDrive placeholders, deduplicated files) and are not links.
@@ -314,6 +313,7 @@ def is_dir_reparse_point(st):
 
 
 def kind_of_mode(mode):
+    # type: (int) -> str
     """'dir', 'file' or 'special' for a mode that is not a link."""
     if stat.S_ISDIR(mode):
         return 'dir'
@@ -323,40 +323,43 @@ def kind_of_mode(mode):
 
 
 def kind_for_lstat_error(err):
-    if err in VANISHED_ERRNOS:
+    # type: (pk.PkOptional[int]) -> str
+    if err in cu.VANISHED_ERRNOS:
         return 'vanished'
     return 'error'
 
 
 def kind_for_target_error(err):
-    if err in DANGLING_ERRNOS:
+    # type: (pk.PkOptional[int]) -> str
+    if err in cu.DANGLING_ERRNOS:
         return 'link-dangling'
     return 'error'
 
 
-def classify_entry_T(path):
+def classify_entry_T(path_list, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> pk.PkTuple[str, pk.PkOptional[pk.PkStat], pk.PkOptional[pk.PkStat], pk.PkOptional[int]]
     """Return (kind, lstat_result, target_stat, errno) for one entry.
     target_stat is what the crawler would read or descend into: the lstat
     result for non-links, the followed os.stat result for links, and None
     when a stat failed. errno is None unless a stat failed.
     """
-    lstat = getattr(os, 'lstat', os.stat)
     try:
-        lst = lstat(path)
+        lst = ppy.get_lstat()(N.os_join_path(path_list))
     except (OSError, IOError):
-        err = current_errno()
+        err = cu.current_errno()
         return (kind_for_lstat_error(err), None, None, err)
     mode = lst[stat.ST_MODE]
     if not (is_link_mode(mode) or is_dir_reparse_point(lst)):
         return (kind_of_mode(mode), lst, lst, None)
     try:
-        target = os.stat(path)
+        target = os.stat(N.os_join_path(path_list))
     except (OSError, IOError):
-        err = current_errno()
+        err = cu.current_errno()
         return (kind_for_target_error(err), lst, None, err)
     return ('link-' + kind_of_mode(target[stat.ST_MODE]), lst, target, None)
-def classify_entry(path):
-    t = classify_entry_T(path)
+def classify_entry(path_list, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> pk.PkEntryKind
+    t = classify_entry_T(path_list, N)
     return {
         'kind': t[0],
         'lst': t[1],
@@ -367,12 +370,13 @@ def classify_entry(path):
 # ---------------------------------------------------------------------------
 # Relation: is the target on one of the allowed devices?
 
-def allowed_devs_for_roots(roots):
+def allowed_devs_for_roots(root_path_lists, N):
+    # type: (pk.PkList[pk.PkOsPath[pk.PkOsName]], pk.PkNamingP[pk.PkOsName]) -> pk.PkList[int]
     """st_dev of each crawl root (native paths). Roots that fail are left out."""
-    devs = []
-    for root in roots:
+    devs = []  # type: pk.PkList[int]
+    for root_path_list in root_path_lists:
         try:
-            dev = os.stat(root)[stat.ST_DEV]
+            dev = os.stat(N.os_join_path(root_path_list))[stat.ST_DEV]
         except (OSError, IOError):
             continue
         if dev not in devs:
@@ -381,6 +385,7 @@ def allowed_devs_for_roots(roots):
 
 
 def fs_relation(target_stat, allowed_devs):
+    # type: (pk.PkOptional[pk.PkStat], pk.PkList[int]) -> str
     if target_stat is None:
         return 'unknown'
     dev = target_stat[stat.ST_DEV]
@@ -395,6 +400,7 @@ def fs_relation(target_stat, allowed_devs):
 # Ancestry: would entering this directory repeat the path?
 
 def dir_key(st):
+    # type: (pk.PkOptional[pk.PkStat]) -> pk.PkDirKey
     """(st_dev, st_ino), or None where the platform gives no inode."""
     if st is None or st[stat.ST_INO] == 0:
         return None
@@ -402,6 +408,7 @@ def dir_key(st):
 
 
 def ancestry(target_stat, ancestors):
+    # type: (pk.PkOptional[pk.PkStat], pk.PkList[pk.PkDirKey]) -> str
     if len(ancestors) >= MAX_DEPTH:
         return 'too-deep'
     key = dir_key(target_stat)
@@ -436,10 +443,12 @@ POLICY = (
 
 
 def matches(pattern, value):
+    # type: (pk.PkOptional[str], str) -> bool
     return pattern is None or pattern == value
 
 
 def decide(kind, relation, place):
+    # type: (str, str, str) -> str
     for row in POLICY:
         p = row[0]
         if matches(p[0], kind) and matches(p[1], relation) and matches(p[2], place):
@@ -447,25 +456,24 @@ def decide(kind, relation, place):
     return 'skip'
 
 
-def classify_and_decide_T(cursor, allowed_devs, ancestors):
+def classify_and_decide_T(path_list, allowed_devs, ancestors, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkList[int], pk.PkList[pk.PkDirKey], pk.PkNamingP[pk.PkOsName]) -> pk.PkTuple[str, str, pk.PkOptional[pk.PkStat], pk.PkOptional[pk.PkStat], pk.PkOptional[int]]
     """One call per entry: returns (action, kind, lstat, target_stat, errno).
     ancestors: the dir keys from the crawl root down to the directory that
     holds this entry (see the vocabulary), NOT the path names.
     """
-    path = os.path.join(*cursor)
-    classified = classify_entry(path)
+    classified = classify_entry(path_list, N)
     target = classified['target']
     action = decide(classified['kind'], fs_relation(target, allowed_devs), ancestry(target, ancestors))
 
     # avoid archiving existing archives.
-    if smells.smells_like_canonical(path) or \
-        smells.smells_like_browse(path) or \
-        smells.smells_like_any_metadata(path):
+    if smells.smells_like_canonical(path_list, N) or smells.smells_like_browse(path_list, N) or smells.smells_like_any_metadata(path_list, N):
         action = 'skip'
 
     return (action, classified['kind'], classified['lst'], target, classified['err'])
-def classify_and_decide(cursor, allowed_devs, ancestors):
-    t = classify_and_decide_T(cursor, allowed_devs, ancestors)
+def classify_and_decide(path_list, allowed_devs, ancestors, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkList[int], pk.PkList[pk.PkDirKey], pk.PkNamingP[pk.PkOsName]) -> pk.PkClassification
+    t = classify_and_decide_T(path_list, allowed_devs, ancestors, N)
     return {
         'action': t[0],
         'kind': t[1],
@@ -474,66 +482,11 @@ def classify_and_decide(cursor, allowed_devs, ancestors):
         'err': t[4]
         }
 
-# ---------------------------------------------------------------------------
-# Reading: open what was classified, and only that.
-
-def is_safe_stat(a, b):
-    """True if two stat results describe the same object, as far as the
-    platform can tell. A 0 st_dev or st_ino (Python 2 on Windows) is not
-    compared."""
-    dev_a = a[stat.ST_DEV]
-    dev_b = b[stat.ST_DEV]
-    if dev_a != 0 and dev_b != 0 and dev_a != dev_b:
-        return 0
-    ino_a = a[stat.ST_INO]
-    ino_b = b[stat.ST_INO]
-    if ino_a != 0 and ino_b != 0 and ino_a != ino_b:
-        return 0
-    return 1
-
-
-def open_for_read_T(path, target_stat):
-    """Open a file the policy said to 'read', without trusting the name.
-
-    Between classification and open, the name can be replaced by a FIFO
-    (opening it normally would wait forever for a writer), a device, or a
-    different file. This opens without blocking, then checks the open
-    handle itself with os.fstat: still a regular file, and the same device
-    and inode as target_stat.
-
-    Returns (file_object, fstat_result, problem, errno):
-      (f, st, None, None)        open: read from f, close it when done
-      (None, st, 'changed', None)  not the object that was classified
-      (None, None, 'error', err)   open or fstat failed
-    """
-    try:
-        fd = os.open(path, READ_FLAGS)
-    except (OSError, IOError):
-        return (None, None, 'error', current_errno())
-    try:
-        st = os.fstat(fd)
-    except (OSError, IOError):
-        err = current_errno()
-        os.close(fd)
-        return (None, None, 'error', err)
-    if not stat.S_ISREG(st[stat.ST_MODE]) or not is_safe_stat(st, target_stat):
-        os.close(fd)
-        return (None, st, 'changed', None)
-    return (os.fdopen(fd, 'rb'), st, None, None)
-def open_for_read(path, target_stat):
-    t = open_for_read_T(path, target_stat)
-    return {
-        'fp': t[0],
-        'st': t[1],
-        'state': t[2],
-        'err': t[3]
-        }
-#----------------------------------------
-
 
 #----------------------------------------
 
-def is_still_dir(dir_path, expected):
+def is_still_dir(dir_path_list, expected, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkOptional[pk.PkStat], pk.PkNamingP[pk.PkOsName]) -> int
     """Re-check a directory just before listing it: still a directory, not a
     link, and the same object that was classified. Closes most of the window
     in which a directory can be swapped for a symlink (os.fwalk closes it
@@ -541,71 +494,97 @@ def is_still_dir(dir_path, expected):
     expected None (the root) is not checked."""
     if expected is None:
         return 1
-    now = classify_entry(dir_path)
-    return now['kind'] == 'dir' and is_safe_stat(now['target'], expected)
+    now = classify_entry(dir_path_list, N)
+    target = now['target']
+    return now['kind'] == 'dir' and target is not None and cu.is_safe_stat(target, expected)
 
-def crawl_tree(root):
-    allowed_devs = allowed_devs_for_roots([root])
+def crawl_tree(root_path_list, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> None
+    allowed_devs = allowed_devs_for_roots([root_path_list], N)
     ppy.prnt('allowed_devs', allowed_devs)
-    # Each pending item: {cursor, ancestors, expected}. Stack: depth-first.
-    pending_dirs = [{'cursor': [root], 'ancestors': [dir_key(os.stat(root))], 'expected': None}]
-    while len(pending_dirs) > 0:
-        item = pending_dirs.pop()
-        cursor = item['cursor']
-        ancestors = item['ancestors']
-        dir_path = os.path.join(*cursor)
-        if not is_still_dir(dir_path, item['expected']):
-            ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %s' % (dir_path,))
-            continue
-        cur_manifest = Manifest()
-        entries = []
+    root_key = dir_key(os.stat(N.os_join_path(root_path_list)))
+    crawl_dir(root_path_list, [root_key], None, allowed_devs, N)
+
+
+def crawl_dir(dir_path_list, ancestors, expected, allowed_devs, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkList[pk.PkDirKey], pk.PkOptional[pk.PkStat], pk.PkList[int], pk.PkNamingP[pk.PkOsName]) -> None
+    """List one directory, sync its files, then descend into its subdirectories (depth-first).
+    Recursion is bounded by MAX_DEPTH (the 'too-deep' policy row), far below Python's limit."""
+    if not is_still_dir(dir_path_list, expected, N):
+        ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %r' % (N.os_join_path(dir_path_list),))
+        return
+    cur_manifest = Manifest(N.kind)
+    # Subdirectories to enter after this directory is synced: their path lists, and their stats at the same index.
+    subdir_path_lists = []  # type: pk.PkList[pk.PkOsPath[pk.PkOsName]]
+    subdir_stats = []  # type: pk.PkList[pk.PkOptional[pk.PkStat]]
+    entries = []  # type: pk.PkList[pk.PkOsName]
+    try:
+        entries = N.listdir(dir_path_list)
+    except (IOError, OSError):
+        pe = ppy.current_exception()
+        ppy.prntlog(ppy.PPY_WARN, 'cannot list %r: %s' % (N.os_join_path(dir_path_list), pe))
+    for entry in entries:
+        entry_path_list = N.child(dir_path_list, entry)
         try:
-            entries = os.listdir(dir_path)
+            classification = classify_and_decide(entry_path_list, allowed_devs, ancestors, N)
+            action = classification['action']
+            ppy.prnt('???', action, N.os_join_path(entry_path_list))
+            if action == 'descend':
+                subdir_path_lists.append(entry_path_list)
+                subdir_stats.append(classification['target'])
+            elif action == 'read':
+                cur_manifest.add_file(entry_path_list, classification, N)
+            elif action != 'skip':
+                raise Exception(action)
         except (IOError, OSError):
+            # One bad entry must not end the whole crawl: log, go on.
             pe = ppy.current_exception()
-            ppy.prntlog(ppy.PPY_WARN, 'cannot list %s: %s' % (dir_path, pe))
-        for entry in entries:
-            cursor.append(entry)
-            entry_path = os.path.join(*cursor)
-            try:
-                classification = classify_and_decide(cursor, allowed_devs, ancestors)
-                action = classification['action']
-                ppy.prnt('???', action, entry_path)
-                if action == 'descend':
-                    target = classification['target']
-                    pending_dirs.append({'cursor': cursor[:], 'ancestors': ancestors + [dir_key(target)], 'expected': target})
-                elif action == 'read':
-                    cur_manifest.add_file(cursor[:], classification)
-                elif action != 'skip':
-                    raise Exception(action)
-            except (IOError, OSError):
-                # One bad entry must not end the whole crawl: log, go on.
-                pe = ppy.current_exception()
-                ppy.prntlog(ppy.PPY_ERROR, 'entry failed %s: %s' % (entry_path, pe))
-            cursor.pop()
-        ppy.prnt('---', dir_path, cur_manifest.entries)
-        sync_manifest(cur_manifest)
-        #break # todo: do not commit this testing hack.
+            ppy.prntlog(ppy.PPY_ERROR, 'entry failed %r: %s' % (N.os_join_path(entry_path_list), pe))
+    ppy.prnt('---', N.os_join_path(dir_path_list), cur_manifest.entries)
+    if len(cur_manifest.entries) > 0:     # no request for directories without files
+        sync_manifest(cur_manifest, N)
+    i = 0
+    while i < len(subdir_path_lists):
+        crawl_dir(subdir_path_lists[i], ancestors + [dir_key(subdir_stats[i])], subdir_stats[i], allowed_devs, N)
+        i = i + 1
 
 # ----------------------------------------
 # (1) we have to obtain the names of paths + files, and know what their type is.
 
-def get_start_dir():
+def get_start_arg():
+    # type: () -> pk.PkArgvStr
     ppy.prnt(','.join(sys.argv))
-    start_dir = root_to_native(sys.argv[1])
     if len(sys.argv) != 2:
         raise Exception('required argument: directory to crawl')
-    if not os.path.isdir(start_dir):
+    return sys.argv[1]
+
+
+def run(arg, N):
+    # type: (pk.PkArgvStr, pk.PkNamingP[pk.PkOsName]) -> None
+    """Everything after the naming choice: written once, checked for bytes and for text names."""
+    start_path_list = N.argv_to_os_path(arg)
+    if not os.path.isdir(N.os_join_path(start_path_list)):
         sys.stderr.write('required argument: must be a directory\n')
         sys.exit(1)
-    return start_dir
+    ppy.prnt('start_dir', N.os_join_path(start_path_list))
+    crawl_tree(start_path_list, N)
+
+
+def main():
+    # type: () -> None
+    N = naming.choose_naming()
+    # windows on python 2.x is uniquely broken.
+    if N.is_lossy:
+        sys.stderr.write("FAIL: unsupported due to lossy conversion issues inherent in Python+OS+FS, sorry.\n")
+        sys.exit(1)
+    arg = get_start_arg()
+    # The only place both name types appear. The branches look the same, but
+    # mypy checks run() as text names in the first and as bytes in the second.
+    if isinstance(N, naming.TextNaming):
+        run(arg, N)
+    else:
+        run(arg, N)
+
 
 if __name__ == '__main__':
-    # windows on python 2.x is uniquely broken.
-    if name_kind == naming.PPY_WIN_CODEPAGE:
-        # todo: for python 2.3+ on any Windows, use a UTF-8 config file instead.
-        sys.stderr.write("unsupported due to Python+Windows issues, sorry.")
-        sys.exit(1)
-    start_dir = get_start_dir()
-    ppy.prnt('start_dir', start_dir, os.path.isdir(start_dir))
-    crawl_tree(start_dir)
+    main()

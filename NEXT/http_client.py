@@ -2,10 +2,9 @@ import portapy_sdk as ppy
 #portapy_pragma ALLOW_MODULE
 import socket
 #portapy_pragma ALLOW_MODULE
-import naming
+import pk_types as pk
 
 _PYB_CHUNK_SIZE=1024*1024
-name_kind, root_to_native, name_to_bytes, bytes_to_name = naming.choose_naming_T()
 
 #----------------------------------------
 # http over socket, "because Python 2.0".
@@ -43,6 +42,7 @@ class HttpError(Exception):
 
 
 def send_all(sock, data):
+    # type: (socket.socket, ppy.PpyBytes) -> None
     """sock.sendall where it exists, else a send() loop."""
     sendall = getattr(sock, 'sendall', None)
     if sendall is not None:
@@ -54,7 +54,8 @@ def send_all(sock, data):
 
 
 def recv_until_eof(sock):
-    parts = []
+    # type: (socket.socket) -> ppy.PpyBytes
+    parts = []  # type: pk.PkList[ppy.PpyBytes]
     while 1:
         data = sock.recv(_HTTP_RECV_SIZE)
         if not data:
@@ -64,8 +65,9 @@ def recv_until_eof(sock):
 
 
 def build_request(host, port, method, path, body, content_type):
+    # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyAsciiStr, ppy.PpyBytes, ppy.PpyAsciiStr) -> ppy.PpyBytes
     """Request head + body as bytes. host, method, path, content_type: ASCII native str."""
-    parts = []
+    parts = []  # type: pk.PkList[ppy.PpyAsciiStr]
     parts.append('%s %s HTTP/1.0\r\n' % (method, path))
     parts.append('Host: %s:%d\r\n' % (host, port))
     parts.append('Content-Type: %s\r\n' % content_type)
@@ -76,6 +78,7 @@ def build_request(host, port, method, path, body, content_type):
 
 
 def parse_response(data):
+    # type: (ppy.PpyBytes) -> pk.PkHttpResponse
     """Raw response bytes -> {'status': int, 'headers': {lowercased bytes: bytes}, 'body': bytes}."""
     end = data.find(_HTTP_HEADER_END)
     if end < 0:
@@ -85,7 +88,7 @@ def parse_response(data):
     if len(status_parts) < 2:
         raise HttpError("bad status line")
     status = int(ppy.b2a(status_parts[1]))
-    headers = {}
+    headers = {}  # type: pk.PkDict[ppy.PpyBytes, ppy.PpyBytes]
     for line in lines[1:]:
         colon = line.find(_HTTP_COLON)
         if colon < 0:
@@ -105,6 +108,7 @@ def parse_response(data):
 
 
 def http_request(host, port, method, path, body, content_type, timeout_seconds):
+    # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyAsciiStr, ppy.PpyBytes, ppy.PpyAsciiStr, int) -> pk.PkHttpResponse
     """One HTTP/1.0 request on a fresh connection. Raises HttpError or socket.error."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -120,14 +124,16 @@ def http_request(host, port, method, path, body, content_type, timeout_seconds):
 
 
 def post_data(host, port, path, value, timeout_seconds):
+    # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyBencoded, int) -> ppy.PpyBencoded
     """POST data, return the reply's body. Non-200 raises HttpError."""
     r = http_request(host, port, 'POST', path, value, 'application/x-bencode', timeout_seconds)
     if r['status'] != 200:
         raise HttpError("HTTP %d from %s: %r" % (r['status'], path, r['body'][:200]))
-    return r['body']
+    return ppy.PpyBencoded(r['body'])
 
 def post_data_bencoded(host, port, path, value, timeout_seconds):
+    # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyBValue, int) -> ppy.PpyBValue
     """POST bencode(data), return the reply's bdecode(body). Non-200 raises HttpError."""
     bv = ppy.bencode(value)
-    body = post_data(host, port, path, bc, timeout_seconds)
+    body = post_data(host, port, path, bv, timeout_seconds)
     return ppy.bdecode(body)

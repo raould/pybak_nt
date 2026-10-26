@@ -1,32 +1,38 @@
 import portapy_sdk as ppy
-import sys
 import os
 #portapy_pragma ALLOW_MODULE
-
+import pk_types as pk
+#portapy_pragma ALLOW_MODULE
+import naming
+#portapy_pragma ALLOW_MODULE
 import re
 #portapy_pragma ALLOW_MODULE
 import metadata_constants as mdc
-
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.insert(0, parent_dir)
-
 #portapy_pragma ALLOW_MODULE
-import metadata_constants as mdc
+import filename_util as fe
 
 #----------------------------------------
 # todo: convert all of this to handle the binary paths!!!!!!!!!!!!!!
+#
+# path: a PkOsPath (a list of names, root first). N: the Naming instance from
+# naming.choose_naming(). Names are compared with constants only through N
+# (N.has_suffix, N.ascii_to_os_name), so both sides are the same type (bytes,
+# or text under win-utf16le).
 
-def smells_like_canonical( path ):
+def smells_like_canonical( path_list, N ):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> int
+    path = N.os_join_path( path_list )
     if not os.path.exists( path ):
         return 0
-    if smells_like_any_metadata( path ):
+    if smells_like_any_metadata( path_list, N ):
         return 0
-    checksum = get_checksum_from_path( path )
-    length = get_length_from_path( path )
+    checksum = fe.get_checksum_from_path_list( path_list, N )
+    length = fe.get_length_from_path_list( path_list, N )
     return checksum != None and length != None
 
-def smells_like_browse( path ):
+def smells_like_browse( path_list, N ):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> int
+    path = N.os_join_path( path_list )
     if not os.path.exists( path ):
         return 0
     f = open(path)
@@ -37,23 +43,33 @@ def smells_like_browse( path ):
                 t = re.search( r'<!-- mark -->', line ) != None
                 if c or b or t:
                    return 1
+    except UnicodeDecodeError:
+        return 0
     finally:
         f.close()
     return 0
 
-def smells_like_any_metadata( path ):
-    return _smells_like_metadata_exts( path, [mdc.PICKLE_DOTEXT, mdc.JSON_DOTEXT] )
+#----------------------------------------
+# note: technically we only support ASCII file extensions
+# because it is the lowest common denominator.
 
-def smells_like_pickled_metadata( path ):
-    return _smells_like_metadata_exts( path, [mdc.PICKLE_DOTEXT] )
+def smells_like_any_metadata( path_list, N ):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> int
+    return _smells_like_metadata_exts( path_list, N, [mdc.PICKLE_DOTEXT, mdc.JSON_DOTEXT] )
 
-def smells_like_json_metadata( path ):
-    return _smells_like_metadata_exts( path, [mdc.JSON_DOTEXT] )
+def smells_like_pickled_metadata( path_list, N ):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> int
+    return _smells_like_metadata_exts( path_list, N, [mdc.PICKLE_DOTEXT] )
 
-def _smells_like_metadata_exts( path, exts ):
-    if not os.path.exists( path ):
+def smells_like_json_metadata( path_list, N ):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> int
+    return _smells_like_metadata_exts( path_list, N, [mdc.JSON_DOTEXT] )
+
+def _smells_like_metadata_exts( path_list, N, exts ):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName], pk.PkList[ppy.PpyAsciiStr]) -> int
+    if not os.path.exists( N.os_join_path( path_list ) ):
         return 0
     for e in exts:
-        if path.endswith(e):
+        if N.has_suffix( path_list[-1], e ):
             return 1
     return 0
