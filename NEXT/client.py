@@ -590,12 +590,22 @@ def crawl_tree(root):
 # ----------------------------------------
 # (1) we have to obtain the names of paths + files, and know what their type is.
 
-if __name__ == '__main__':
+def get_start_dir():
     ppy.prnt(','.join(sys.argv))
-    if len(sys.argv) == 1:
-        raise Exception('required argument: directory to crawl')
     start_dir = root_to_native(sys.argv[1])
-    ppy.prnt('start_dir', start_dir, os.path.isdir(start_dir))
+    if len(sys.argv) != 2:
+        raise Exception('required argument: directory to crawl')
     if not os.path.isdir(start_dir):
-        raise Exception('required argument: must be a directory')
+        sys.stderr.write('required argument: must be a directory\n')
+        sys.exit(1)
+    return start_dir
+
+if __name__ == '__main__':
+    # windows on python 2.x is uniquely broken.
+    if name_kind == naming.PPY_WIN_CODEPAGE:
+        # todo: for python 2.3+ on any Windows, use a UTF-8 config file instead.
+        sys.stderr.write("unsupported due to Python+Windows issues, sorry.")
+        sys.exit(1)
+    start_dir = get_start_dir()
+    ppy.prnt('start_dir', start_dir, os.path.isdir(start_dir))
     crawl_tree(start_dir)

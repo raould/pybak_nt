@@ -1,8 +1,11 @@
+import portapy_sdk as ppy
 import sys
 import os
-
 #portapy_pragma ALLOW_MODULE
+
 import re
+#portapy_pragma ALLOW_MODULE
+import metadata_constants as mdc
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -10,6 +13,9 @@ sys.path.insert(0, parent_dir)
 
 #portapy_pragma ALLOW_MODULE
 import metadata_constants as mdc
+
+#----------------------------------------
+# todo: convert all of this to handle the binary paths!!!!!!!!!!!!!!
 
 def smells_like_canonical( path ):
     if not os.path.exists( path ):
@@ -31,9 +37,9 @@ def smells_like_browse( path ):
                 t = re.search( r'<!-- mark -->', line ) != None
                 if c or b or t:
                    return 1
-        return 0
     finally:
         f.close()
+    return 0
 
 def smells_like_any_metadata( path ):
     return _smells_like_metadata_exts( path, [mdc.PICKLE_DOTEXT, mdc.JSON_DOTEXT] )
@@ -44,9 +50,10 @@ def smells_like_pickled_metadata( path ):
 def smells_like_json_metadata( path ):
     return _smells_like_metadata_exts( path, [mdc.JSON_DOTEXT] )
 
-def _smells_like_metadata_exts_reducer( path, exts ):
-    return r or path.endswith(e)
 def _smells_like_metadata_exts( path, exts ):
     if not os.path.exists( path ):
         return 0
-    return reduce(_smells_like_metadata_exts_reducer, exts, 0 )
+    for e in exts:
+        if path.endswith(e):
+            return 1
+    return 0
