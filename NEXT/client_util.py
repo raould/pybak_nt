@@ -157,5 +157,3 @@ def open_for_read(path_list, target_stat, N):
         'state': t[2],
         'err': t[3]
         }
-
-

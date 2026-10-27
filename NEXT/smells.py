@@ -35,19 +35,21 @@ def smells_like_browse( path_list, N ):
     path = N.os_join_path( path_list )
     if not os.path.exists( path ):
         return 0
-    f = open(path)
     try:
-        for line in f:
-            c = re.search( r'psync-o-pathics.com/canonical', line ) != None
-            b = re.search( r'psync-o-pathics.com/browse', line ) != None
-            t = re.search( r'<!-- mark -->', line ) != None
-            if c or b or t:
-                ppy.prnt('skipping \'browse\' file', path)
-                return 1
-    except UnicodeDecodeError:
-        return 0
-    finally:
+        f = open(path)
+        try:
+            for line in f:
+                c = re.search( r'psync-o-pathics.com/canonical', line ) != None
+                b = re.search( r'psync-o-pathics.com/browse', line ) != None
+                t = re.search( r'<!-- mark -->', line ) != None
+                if c or b or t:
+                    ppy.prnt('skipping \'browse\' file', path)
+                    return 1
+        except UnicodeDecodeError:
+            return 0
         f.close()
+    except:
+        pass
     return 0
 
 #----------------------------------------

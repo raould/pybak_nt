@@ -32,7 +32,6 @@ _PYB_CHUNK_SIZE=1024*1024
 
 """----------------------------------------
 crawl TODOs:
-
 - skip network mounts too unless they're explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
 - handle unbounded & special files.
 - support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
@@ -84,14 +83,16 @@ def get_manifest_entry_sort_key(e):
     # type: (ppy.PpyBDict) -> ppy.PpyBValue
     return e[ppy.bkey('hexl_path')]
 class Manifest:
-    def __init__(self, name_kind):
-        # type: (pk.PkNameKind) -> None
+    def __init__(self, N):
+        # type: (pk.PkNamingP[pk.PkOsName]) -> None
         self.entries = []  # type: pk.PkList[ppy.PpyBDict]
         # todo:
         # all the metadata that is true for the whole directory:
         # naming kind, filesystemencoding, et. al.
         self.bmetadata = {}  # type: ppy.PpyBDict
-        ppy.bd_add(self.bmetadata, 'name_kind', ppy.a2b(name_kind))
+        ppy.bd_add(self.bmetadata, 'name_kind', ppy.a2b(N.kind))
+        ppy.bd_add(self.bmetadata, 'filesystemencoding', ppy.a2b(naming.interpreter_name_codec() or 'None'))
+        ppy.bd_add(self.bmetadata, 'unicode_filenames_supported', ppy.a2b(naming.unicode_filenames_supported()))
     def get_name_kind(self):
         # type: () -> ppy.PpyAsciiStr
         return ppy.b2a(ppy.bd_get_bytes(self.bmetadata, 'name_kind'))
@@ -515,7 +516,7 @@ def crawl_dir(dir_path_list, ancestors, expected, allowed_devs, N):
     if not is_still_dir(dir_path_list, expected, N):
         ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %r' % (N.os_join_path(dir_path_list),))
         return
-    cur_manifest = Manifest(N.kind)
+    cur_manifest = Manifest(N)
     # Subdirectories to enter after this directory is synced: their path lists, and their stats at the same index.
     subdir_path_lists = []  # type: pk.PkList[pk.PkOsPath[pk.PkOsName]]
     subdir_stats = []  # type: pk.PkList[pk.PkOptional[pk.PkStat]]
