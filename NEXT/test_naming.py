@@ -27,18 +27,22 @@ def bytes_type():
 
 
 def text_type():
-    if naming.PPY_UNICODE is not None:
-        return naming.PPY_UNICODE
-    return type('')
+    return ppy.PpyText          # unicode on Python 2, str on Python 3
+
+
+def char_of(cp):
+    """One code point as text: unichr on Python 2, chr on Python 3. ValueError above U+FFFF on narrow builds."""
+    try:
+        return unichr(cp)
+    except NameError:
+        return chr(cp)
 
 
 def make_text(code_points):
     """Text from code points, on every version."""
-    text = ''
-    if naming.PPY_UNICODE is not None:
-        text = naming.PPY_UNICODE(text)
+    text = ppy.PpyText('')
     for cp in code_points:
-        text = text + naming.PPY_UNICHR(cp)
+        text = text + char_of(cp)
     return text
 
 
@@ -111,6 +115,10 @@ def test_strategies(failures):
     check(failures, isinstance(naming.make_win_utf8_enc(), naming.BytesNaming), "win-utf8 is a BytesNaming")
     check(failures, isinstance(naming.make_win_clear_enc(), naming.BytesNaming), "win-codepage is a BytesNaming")
     check(failures, isinstance(naming.make_utf16le_enc(), naming.TextNaming), "win-utf16le is a TextNaming")
+    for n in (naming.make_clear_enc(), naming.make_utf16le_enc()):
+        check(failures, n.platform == sys.platform and n.python == sys.version, "%s: platform and python facts" % n.kind)
+        check(failures, n.fs_codec is None or n.fs_codec == n.fs_codec.lower(), "%s: fs_codec is lowercased" % n.kind)
+        check(failures, n.win32 in (0, 1), "%s: win32 fact" % n.kind)
     check_strategy(failures, naming.make_clear_enc(), byte_samples(), bytes_type(), 0)
     check_strategy(failures, naming.make_win_utf8_enc(), byte_samples(), bytes_type(), 0)
     check_strategy(failures, naming.make_win_clear_enc(), byte_samples(), bytes_type(), 1)
@@ -121,7 +129,7 @@ def test_strategies(failures):
 def test_chosen_matches_listdir(failures):
     """The chosen strategy's name type is the type os.listdir() really returns here, and paths work end to end."""
     n = naming.choose_naming()
-    check(failures, n.kind in (naming.PPY_NATIVE_BYTES, naming.PPY_WIN_UTF8, naming.PPY_WIN_UTF16LE, naming.PPY_WIN_CODEPAGE), "chosen kind %r" % n.kind)
+    check(failures, n.kind in (naming.PK_NATIVE_BYTES, naming.PK_WIN_UTF8, naming.PK_WIN_UTF16LE, naming.PK_WIN_CODEPAGE), "chosen kind %r" % n.kind)
     root_path_list = n.argv_to_os_path(os.path.dirname(os.path.abspath(sys.argv[0])))
     check(failures, len(root_path_list) == 1, "%s: argv_to_os_path gives a one-element path" % n.kind)
     entries = n.listdir(root_path_list)

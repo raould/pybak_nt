@@ -152,6 +152,14 @@ if MYPY:
     class PkNamingP(typing.Protocol[PkOsName]):
         kind = PkNameKind('')  # type: PkNameKind
         is_lossy = 0  # type: int
+        # Facts about this client, for the manifest header (naming.py's docstring).
+        fs_codec = None  # type: typing.Optional[str]
+        fs_errors = None  # type: typing.Optional[str]
+        locale_codec = None  # type: typing.Optional[str]
+        platform = ''  # type: str
+        python = ''  # type: str
+        hostname = None  # type: typing.Optional[str]
+        win32 = 0  # type: int
 
         def argv_to_os_path(self, arg):
             # type: (PkArgvStr) -> typing.List[PkOsName]

@@ -82,17 +82,40 @@ def meta_stats_for_server(meta):
 def get_manifest_entry_sort_key(e):
     # type: (ppy.PpyBDict) -> ppy.PpyBValue
     return e[ppy.bkey('hexl_path')]
+def _add_ascii_fact(bd, key, value):
+    # type: (ppy.PpyBDict, ppy.PpyAsciiStr, pk.PkOptional[str]) -> None
+    """Add a fact as ASCII bytes. Missing or non-ASCII facts are left out, not mangled."""
+    if value is None:
+        return
+    try:
+        ppy.require_ascii_str(value)
+    except (ValueError, TypeError):
+        return
+    ppy.bd_add(bd, key, ppy.a2b(value))
+
+
+def manifest_header(N):
+    # type: (pk.PkNamingP[pk.PkOsName]) -> ppy.PpyBDict
+    """What is true for every entry of a manifest from this client: the naming
+    strategy and the facts about the client (display hints for the server)."""
+    header = {}  # type: ppy.PpyBDict
+    ppy.bd_add(header, 'name_kind', ppy.a2b(N.kind))
+    _add_ascii_fact(header, 'fs_codec', N.fs_codec)
+    _add_ascii_fact(header, 'fs_errors', N.fs_errors)
+    _add_ascii_fact(header, 'locale_codec', N.locale_codec)
+    _add_ascii_fact(header, 'platform', N.platform)
+    _add_ascii_fact(header, 'python', N.python)
+    _add_ascii_fact(header, 'hostname', N.hostname)
+    ppy.bd_add(header, 'win32', N.win32)
+    return header
+
+
 class Manifest:
-    def __init__(self, N):
-        # type: (pk.PkNamingP[pk.PkOsName]) -> None
+    def __init__(self, header):
+        # type: (ppy.PpyBDict) -> None
+        """header: from manifest_header(N), the same for every manifest of a run."""
         self.entries = []  # type: pk.PkList[ppy.PpyBDict]
-        # todo:
-        # all the metadata that is true for the whole directory:
-        # naming kind, filesystemencoding, et. al.
-        self.bmetadata = {}  # type: ppy.PpyBDict
-        ppy.bd_add(self.bmetadata, 'name_kind', ppy.a2b(N.kind))
-        ppy.bd_add(self.bmetadata, 'filesystemencoding', ppy.a2b(naming.interpreter_name_codec() or 'None'))
-        ppy.bd_add(self.bmetadata, 'unicode_filenames_supported', ppy.a2b(naming.unicode_filenames_supported()))
+        self.bmetadata = header
     def get_name_kind(self):
         # type: () -> ppy.PpyAsciiStr
         return ppy.b2a(ppy.bd_get_bytes(self.bmetadata, 'name_kind'))
@@ -506,17 +529,19 @@ def crawl_tree(root_path_list, N):
     allowed_devs = allowed_devs_for_roots([root_path_list], N)
     ppy.prnt('allowed_devs', allowed_devs)
     root_key = dir_key(os.stat(N.os_join_path(root_path_list)))
-    crawl_dir(root_path_list, [root_key], None, allowed_devs, N)
+    header = manifest_header(N)
+    ppy.prnt('manifest header', header)
+    crawl_dir(root_path_list, [root_key], None, allowed_devs, header, N)
 
 
-def crawl_dir(dir_path_list, ancestors, expected, allowed_devs, N):
-    # type: (pk.PkOsPath[pk.PkOsName], pk.PkList[pk.PkDirKey], pk.PkOptional[pk.PkStat], pk.PkList[int], pk.PkNamingP[pk.PkOsName]) -> None
+def crawl_dir(dir_path_list, ancestors, expected, allowed_devs, header, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkList[pk.PkDirKey], pk.PkOptional[pk.PkStat], pk.PkList[int], ppy.PpyBDict, pk.PkNamingP[pk.PkOsName]) -> None
     """List one directory, sync its files, then descend into its subdirectories (depth-first).
     Recursion is bounded by MAX_DEPTH (the 'too-deep' policy row), far below Python's limit."""
     if not is_still_dir(dir_path_list, expected, N):
         ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %r' % (N.os_join_path(dir_path_list),))
         return
-    cur_manifest = Manifest(N)
+    cur_manifest = Manifest(header)
     # Subdirectories to enter after this directory is synced: their path lists, and their stats at the same index.
     subdir_path_lists = []  # type: pk.PkList[pk.PkOsPath[pk.PkOsName]]
     subdir_stats = []  # type: pk.PkList[pk.PkOptional[pk.PkStat]]
@@ -548,7 +573,7 @@ def crawl_dir(dir_path_list, ancestors, expected, allowed_devs, N):
         sync_manifest(cur_manifest, N)
     i = 0
     while i < len(subdir_path_lists):
-        crawl_dir(subdir_path_lists[i], ancestors + [dir_key(subdir_stats[i])], subdir_stats[i], allowed_devs, N)
+        crawl_dir(subdir_path_lists[i], ancestors + [dir_key(subdir_stats[i])], subdir_stats[i], allowed_devs, header, N)
         i = i + 1
 
 # ----------------------------------------
