@@ -212,7 +212,6 @@ def sync_manifest(manifest, N):
 """
 crawl TODOs:
 
-- ignore bad-smelling files (based on filenames, extensions, etc.) mainly to avoid trying to crawl exising pybak storage.
 - skip network mounts too unless they're explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
 - handle unbounded & special files.
 - support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
