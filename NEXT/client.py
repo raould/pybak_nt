@@ -30,6 +30,14 @@ _PYB_CHUNK_SIZE=1024*1024
 # - we are using bencode for marshalling, which is quite invasive, because
 # we are painted into a corner by having to support Python 2.0 - Python 3.x.
 
+"""----------------------------------------
+crawl TODOs:
+
+- skip network mounts too unless they're explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
+- handle unbounded & special files.
+- support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
+"""
+
 # ---------------------------------------------------------------------------
 
 def stat_for_server(st):
@@ -208,15 +216,6 @@ def sync_manifest(manifest, N):
     for w in wanted.entries:
         ppy.prnt('w', w.hex_path_list, w.offset)
         sync_one(w.hex_path_list, fake_sender, w.offset, _PYB_CHUNK_SIZE, N)
-
-"""
-crawl TODOs:
-
-- skip network mounts too unless they're explicitly listed. A hung NFS mount can block a read forever, and nothing in Python can time out a blocked file read.
-- handle unbounded & special files.
-- support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
-
-"""
 
 """Crawl classification and policy for the pybak client.
 
