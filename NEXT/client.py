@@ -465,12 +465,16 @@ def classify_and_decide_T(path_list, allowed_devs, ancestors, N):
     classified = classify_entry(path_list, N)
     target = classified['target']
     action = decide(classified['kind'], fs_relation(target, allowed_devs), ancestry(target, ancestors))
-
     # avoid archiving existing archives.
-    if smells.smells_like_canonical(path_list, N) or smells.smells_like_browse(path_list, N) or smells.smells_like_any_metadata(path_list, N):
+    if smells.smells_like_canonical(path_list, N) or \
+        smells.smells_like_browse(path_list, N) or \
+        smells.smells_like_any_metadata(path_list, N):
         action = 'skip'
-
-    return (action, classified['kind'], classified['lst'], target, classified['err'])
+    return (action,
+            classified['kind'],
+            classified['lst'],
+            target,
+            classified['err'])
 def classify_and_decide(path_list, allowed_devs, ancestors, N):
     # type: (pk.PkOsPath[pk.PkOsName], pk.PkList[int], pk.PkList[pk.PkDirKey], pk.PkNamingP[pk.PkOsName]) -> pk.PkClassification
     t = classify_and_decide_T(path_list, allowed_devs, ancestors, N)

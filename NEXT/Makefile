@@ -3,6 +3,7 @@ all: check types test run3
 run3:
 	mkdir -p /tmp/test
 	cp -r . /tmp/test
+	echo "psync-o-pathics.com/browse" > /tmp/test/abrowse.txt
 	PYTHONPATH="/home/superman/Dev/portapy/src" python3 /home/superman/Dev/pybak_nt/NEXT/client.py /tmp/test
 
 check:
