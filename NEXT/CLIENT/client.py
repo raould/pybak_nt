@@ -10,6 +10,10 @@ import pk_types as pk
 #portapy_pragma ALLOW_MODULE
 import client_util as cu
 #portapy_pragma ALLOW_MODULE
+import util
+#portapy_pragma ALLOW_MODULE
+import manifest as mf
+#portapy_pragma ALLOW_MODULE
 import wanted_sync as ws
 #portapy_pragma ALLOW_MODULE
 import http_client
@@ -138,7 +142,7 @@ class Manifest:
             if fp is None or st is None:
                 raise IOError("could not read file: %s errno %s" % (opened['state'], opened['err']))
             try:
-                md5_bytes, length = cu.md5_and_length(fp, 8192)
+                md5_bytes, length = util.md5_and_length(fp, 8192)
             finally:
                 fp.close()
             ppy.prnt(N.os_join_path(path_list), 'length', length, 'md5', md5_bytes)
@@ -147,7 +151,7 @@ class Manifest:
                 file_metadata['stat'] = st
             e = {}  # type: ppy.PpyBDict
             ppy.bd_add(e, 'hexl_path', cu.to_hex_path_list(path_list, N))
-            ppy.bd_add(e, 'md5', cu.md5_hex(md5_bytes))
+            ppy.bd_add(e, 'md5', util.md5_hex(md5_bytes))
             ppy.bd_add(e, 'length', length)
             ppy.bd_add(e, 'metadata', meta_stats_for_server(file_metadata))
             self.entries.append(e)
@@ -165,21 +169,6 @@ class Manifest:
         ppy.bd_add(bd, 'entries', sorted)
         return ppy.bencode(bd)
 
-class ManifestUnmarshalled:
-    def __init__(self, data):
-        # type: (ppy.PpyBencoded) -> None
-        init = ppy.bv_dict(ppy.bdecode(data))
-        self.bmetadata = ppy.bd_get_dict(init, 'bmetadata')
-        self.entries = []  # type: pk.PkList[ppy.PpyBDict]
-        for e in ppy.bd_get_list(init, 'entries'):
-            self.entries.append(ppy.bv_dict(e))
-    def get_name_kind(self):
-        # type: () -> ppy.PpyAsciiStr
-        return ppy.b2a(ppy.bd_get_bytes(self.bmetadata, 'name_kind'))
-    def to_debug_str(self):
-        # type: () -> str
-        return "'%s' %s" % (self.bmetadata, self.entries)
-        
 def fake_sender(hex_path_list, chunk, pos):
     # type: (pk.PkHexPath, pk.PkFileBytes, pk.PkOffset) -> None
     ppy.prnt('>>> sending', pos, len(chunk), hex_path_list)
@@ -216,7 +205,7 @@ def fake_server_sync(data):
     # http_client.post_data('0.0.0.0', 8000, '/sync', data, 10)
 
     # fake response: send all of every file.
-    manifest = ManifestUnmarshalled(data)
+    manifest = mf.ManifestUnmarshalled(data)
     ppy.prnt('client manifest', manifest.to_debug_str())
     wanted = ws.WantedSync()
     for e in manifest.entries:
@@ -368,7 +357,7 @@ def classify_entry_T(path_list, N):
     try:
         lst = ppy.get_lstat()(N.os_join_path(path_list))
     except (OSError, IOError):
-        err = cu.current_errno()
+        err = util.current_errno()
         return (kind_for_lstat_error(err), None, None, err)
     mode = lst[stat.ST_MODE]
     if not (is_link_mode(mode) or is_dir_reparse_point(lst)):
@@ -376,7 +365,7 @@ def classify_entry_T(path_list, N):
     try:
         target = os.stat(N.os_join_path(path_list))
     except (OSError, IOError):
-        err = cu.current_errno()
+        err = util.current_errno()
         return (kind_for_target_error(err), lst, None, err)
     return ('link-' + kind_of_mode(target[stat.ST_MODE]), lst, target, None)
 def classify_entry(path_list, N):
@@ -487,11 +476,11 @@ def classify_and_decide_T(path_list, allowed_devs, ancestors, N):
     classified = classify_entry(path_list, N)
     target = classified['target']
     action = decide(classified['kind'], fs_relation(target, allowed_devs), ancestry(target, ancestors))
-    # avoid archiving existing archives.
-    if smells.smells_like_canonical(path_list, N) or \
-        smells.smells_like_browse(path_list, N) or \
-        smells.smells_like_any_metadata(path_list, N):
-        action = 'skip'
+    # Avoid archiving existing archives. Only for files the policy would read:
+    # the smell tests open files, so they must never see a FIFO or a device.
+    if action == 'read' and target is not None:
+        if smells.smells_like_canonical(path_list, N) or smells.smells_like_browse(path_list, target, N) or smells.smells_like_any_metadata(path_list, N):
+            action = 'skip'
     return (action,
             classified['kind'],
             classified['lst'],
@@ -531,51 +520,58 @@ def crawl_tree(root_path_list, N):
     root_key = dir_key(os.stat(N.os_join_path(root_path_list)))
     header = manifest_header(N)
     ppy.prnt('manifest header', header)
-    crawl_dir(root_path_list, [root_key], None, allowed_devs, header, N)
+    crawl_dir(root_path_list, [root_key], allowed_devs, header, N)
 
 
-def crawl_dir(dir_path_list, ancestors, expected, allowed_devs, header, N):
-    # type: (pk.PkOsPath[pk.PkOsName], pk.PkList[pk.PkDirKey], pk.PkOptional[pk.PkStat], pk.PkList[int], ppy.PpyBDict, pk.PkNamingP[pk.PkOsName]) -> None
-    """List one directory, sync its files, then descend into its subdirectories (depth-first).
-    Recursion is bounded by MAX_DEPTH (the 'too-deep' policy row), far below Python's limit."""
-    if not is_still_dir(dir_path_list, expected, N):
-        ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %r' % (N.os_join_path(dir_path_list),))
-        return
-    cur_manifest = Manifest(header)
-    # Subdirectories to enter after this directory is synced: their path lists, and their stats at the same index.
-    subdir_path_lists = []  # type: pk.PkList[pk.PkOsPath[pk.PkOsName]]
-    subdir_stats = []  # type: pk.PkList[pk.PkOptional[pk.PkStat]]
-    entries = []  # type: pk.PkList[pk.PkOsName]
-    try:
-        entries = N.listdir(dir_path_list)
-    except (IOError, OSError):
-        pe = ppy.current_exception()
-        ppy.prntlog(ppy.PPY_WARN, 'cannot list %r: %s' % (N.os_join_path(dir_path_list), pe))
-    for entry in entries:
-        entry_path_list = N.child(dir_path_list, entry)
+def crawl_dir(root_path_list, root_key, allowed_devs, header, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkDirKey, pk.PkList[int], ppy.PpyBDict, pk.PkNamingP[pk.PkOsName]) -> None
+    """Depth-first and iterative: a local stack of directories still to visit.
+    Each loop lists one directory, syncs its files, and pushes its subdirectories.
+    The stack is three parallel lists, pushed and popped together; the same index is one pending directory:
+      pending_path_lists[i]  its path list
+      pending_ancestors[i]   the dir keys of it and every directory above it (loop detection)
+      pending_expected[i]    its stat when classified, re-checked before listing (None for the root)"""
+    pending_path_lists = [root_path_list]  # type: pk.PkList[pk.PkOsPath[pk.PkOsName]]
+    pending_ancestors = [[root_key]]  # type: pk.PkList[pk.PkList[pk.PkDirKey]]
+    pending_expected = [None]  # type: pk.PkList[pk.PkOptional[pk.PkStat]]
+    while len(pending_path_lists) > 0:
+        dir_path_list = pending_path_lists.pop()
+        ancestors = pending_ancestors.pop()
+        expected = pending_expected.pop()
+        if not is_still_dir(dir_path_list, expected, N):
+            ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %r' % (N.os_join_path(dir_path_list),))
+            continue
+        cur_manifest = Manifest(header)
+        entries = []  # type: pk.PkList[pk.PkOsName]
         try:
-            classification = classify_and_decide(entry_path_list, allowed_devs, ancestors, N)
-            action = classification['action']
-            ppy.prnt('???', action, N.os_join_path(entry_path_list))
-            if action == 'descend':
-                subdir_path_lists.append(entry_path_list)
-                subdir_stats.append(classification['target'])
-            elif action == 'read':
-                cur_manifest.add_file(entry_path_list, classification, N)
-            elif action != 'skip':
-                raise Exception(action)
+            entries = N.listdir(dir_path_list)
         except (IOError, OSError):
-            # One bad entry must not end the whole crawl: log, go on.
             pe = ppy.current_exception()
-            ppy.prntlog(ppy.PPY_ERROR, 'entry failed %r: %s' % (N.os_join_path(entry_path_list), pe))
-    ppy.prnt('---', N.os_join_path(dir_path_list), cur_manifest.entries)
-    if len(cur_manifest.entries) > 0:     # no request for directories without files
-        sync_manifest(cur_manifest, N)
-    i = 0
-    while i < len(subdir_path_lists):
-        crawl_dir(subdir_path_lists[i], ancestors + [dir_key(subdir_stats[i])], subdir_stats[i], allowed_devs, header, N)
-        i = i + 1
-
+            ppy.prntlog(ppy.PPY_WARN, 'cannot list %r: %s' % (N.os_join_path(dir_path_list), pe))
+        for entry in entries:
+            entry_path_list = N.child(dir_path_list, entry)
+            try:
+                classification = classify_and_decide(entry_path_list, allowed_devs, ancestors, N)
+                action = classification['action']
+                ppy.prnt('???', action, N.os_join_path(entry_path_list))
+                if action == 'descend':
+                    target = classification['target']
+                    pending_path_lists.append(entry_path_list)
+                    pending_ancestors.append(ancestors + [dir_key(target)])
+                    pending_expected.append(target)
+                elif action == 'read':
+                    cur_manifest.add_file(entry_path_list, classification, N)
+                elif action != 'skip':
+                    raise Exception(action)
+            except (IOError, OSError):
+                # One bad entry must not end the whole crawl: log, go on.
+                pe = ppy.current_exception()
+                ppy.prntlog(ppy.PPY_ERROR, 'entry failed %r: %s' % (N.os_join_path(entry_path_list), pe))
+        ppy.prnt('---', N.os_join_path(dir_path_list), cur_manifest.entries)
+        if len(cur_manifest.entries) > 0:     # no request for directories without files
+            sync_manifest(cur_manifest, N)
+        break # do not commit this testing hack.
+ 
 # ----------------------------------------
 # (1) we have to obtain the names of paths + files, and know what their type is.
 

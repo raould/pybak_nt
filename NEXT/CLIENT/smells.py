@@ -3,19 +3,17 @@ import os
 #portapy_pragma ALLOW_MODULE
 import pk_types as pk
 #portapy_pragma ALLOW_MODULE
-import naming
-#portapy_pragma ALLOW_MODULE
-import re
-#portapy_pragma ALLOW_MODULE
 import metadata_constants as mdc
+#portapy_pragma ALLOW_MODULE
+import client_util as cu
 #portapy_pragma ALLOW_MODULE
 import filename_util as fe
 
 #----------------------------------------
 # todo: convert all of this to handle the binary paths!!!!!!!!!!!!!!
 #
-# path: a PkOsPath (a list of names, root first). N: the Naming instance from
-# naming.choose_naming(). Names are compared with constants only through N
+# path_list: a PkOsPath (a list of names, root first). N: the naming strategy
+# (pk.PkNamingP). Names are compared with constants only through N
 # (N.has_suffix, N.ascii_to_os_name), so both sides are the same type (bytes,
 # or text under win-utf16le).
 
@@ -30,26 +28,31 @@ def smells_like_canonical( path_list, N ):
     length = fe.get_length_from_path_list( path_list, N )
     return checksum != None and length != None
 
-def smells_like_browse( path_list, N ):
-    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> int
-    path = N.os_join_path( path_list )
-    if not os.path.exists( path ):
+# Markers that pybak's own browse pages carry. Looked for in the first
+# BROWSE_SNIFF_BYTES only, as ASCII bytes: no decoding, no regular expressions.
+BROWSE_MARKERS = ('psync-o-pathics.com/canonical', 'psync-o-pathics.com/browse', '<!-- mark -->')
+BROWSE_SNIFF_BYTES = 65536
+
+def smells_like_browse( path_list, target_stat, N ):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkStat, pk.PkNamingP[pk.PkOsName]) -> int
+    """True if the file starts like one of pybak's own browse pages.
+
+    Only call this for an entry the policy said to 'read': it opens the file
+    with cu.open_for_read (non-blocking, checked against target_stat), so a
+    FIFO, a device or a swapped file is never read, and it reads at most
+    BROWSE_SNIFF_BYTES."""
+    opened = cu.open_for_read( path_list, target_stat, N )
+    fp = opened['fp']
+    if fp is None:
         return 0
     try:
-        f = open(path)
-        try:
-            for line in f:
-                c = re.search( r'psync-o-pathics.com/canonical', line ) != None
-                b = re.search( r'psync-o-pathics.com/browse', line ) != None
-                t = re.search( r'<!-- mark -->', line ) != None
-                if c or b or t:
-                    ppy.prnt('skipping \'browse\' file', path)
-                    return 1
-        except UnicodeDecodeError:
-            return 0
-        f.close()
-    except:
-        pass
+        head = fp.read( BROWSE_SNIFF_BYTES )
+    finally:
+        fp.close()
+    for marker in BROWSE_MARKERS:
+        if head.find( ppy.a2b( marker ) ) >= 0:
+            ppy.prnt('skipping \'browse\' file', repr( N.os_join_path( path_list ) ))
+            return 1
     return 0
 
 #----------------------------------------
