@@ -20,16 +20,41 @@ when its 'def' runs would fail. Postponed, they are strings only mypy reads.
 from __future__ import annotations
 
 import fastapi as fa
-
+import os
+import json
 import portapy_sdk as ppy
 import pk_types as pk
-import manifest as mf
+import manifest_unmarshalled as mfu
 import wanted_sync as ws
+import server_util as su
+import util
 
 BENCODE = 'application/x-bencode'
 
+#----------------------------------------
+# config
+
+config = './config.json'
+if not os.path.exists(config):
+    raise Exception('./config.json required')
+
+with open(config, 'r') as f:
+    json = json.load(f)
+
+canonical = json['canonical']
+ppy.prnt('canonical', canonical, type(canonical))
+if not os.path.exists(canonical):
+    raise Exception("./config.json: invalid 'canonical' path '%s'" % canonical)
+
+browse = json['browse']
+if not os.path.exists(browse):
+    raise Exception("./config.json: invalid 'browse' path '%s'" % browse)
+                    
+#----------------------------------------
+
 app = fa.FastAPI()
 
+#----------------------------------------
 
 def bencode_response(value: ppy.PpyBValue, status_code: int) -> fa.Response:
     return fa.Response(content=ppy.bencode(value), status_code=status_code, media_type=BENCODE)
@@ -41,26 +66,85 @@ def error_response(message: str, status_code: int) -> fa.Response:
     return bencode_response(body, status_code)
 
 
-def wanted_for(manifest: mf.ManifestUnmarshalled) -> ws.WantedSync:
-    """Which of the manifest's files the server wants, and from which offset.
+def offset_wanted(md5, length, manifest_bmetadata, bmetadata):
+    def helper(md5str, length, manifest_bmetadata, bmetadata):
+        # type: () -> ppy.PpyAsciiStr
+        """ return => 0 means yes, and start at that byte offset.
+            retrn < 0 means no. """
+        filename = '%s_%s' % (md5str, length)
+        stat = ppy.bd_get(bmetadata, 'stat') # could be None.
+        lstat = ppy.bd_get(bmetadata, 'lstat')
+        assert lstat is not None
+        p = os.path.join(*su.get_data_path_list(md5str))
+        cpl = os.path.join(canonical, p, filename)
+        ppy.prnt('offset_wanted', cpl)
+        if not os.path.exists(cpl):
+            return 0
+        sofar = os.path.getsize(cpl)
+        ppy.prnt('offest_wanted: sofar', sofar, cpl)
+        if sofar < length:
+            return sofar
+        if sofar > length:
+            ppy.prntlog(ppy.PPY_ERROR, 'ERROR: our local file is bigger than the client\'s.')
+            return -1
+        # we assume the md5 was already checked upon first completion.
+        return -1
+    md5str = ppy.ascii_or_none(md5) # string of 32 hex chars.
+    offset_wanted = helper(md5str, length, manifest_bmetadata, bmetadata)
+    ppy.prnt('offset_wanted', offset_wanted, md5)
+    return offset_wanted
 
-    todo: look each md5_length up in the store: skip content that is complete,
-    resume staged content from its size. For now every file is wanted from 0.
-    Sightings (.mdj) are not recorded yet either.
+def wanted_for(manifest: mfu.ManifestUnmarshalled) -> ws.WantedSync:
+    """Which of the manifest's files the server wants, and from which offset.
+    todo:
+    - look each md5_length up in the store: skip content that is complete,
+    resume staged content from its size.
+    - check and update archive metadata.
+    - save manifest metadata for brose use.
     """
+    manifest_bmetadata = manifest.get_bmetadata() # for all entries.
     wanted = ws.WantedSync()
     for entry in manifest.entries:
-        hex_path_list: pk.PkHexPath = ws.hex_path_list_from_bd(entry)
-        wanted.add_file(hex_path_list, pk.PkOffset(0))
+        md5 = ppy.bd_get(entry, 'md5') # binary string.
+        length = ppy.bd_get(entry, 'length')
+        hexl_path = ppy.bd_get(entry, 'hexl_path') # hex path list.
+        bmetadata = ppy.bd_get(entry, 'bmetadata')
+        ppy.prnt("wanted_for", md5, length)
+        offset = offset_wanted(
+            md5,
+            length,
+            manifest_bmetadata,
+            bmetadata
+            )
+        if (offset >= 0):
+            # todo: update metadata on the files using decoded path.
+            wanted.add_file(md5, length, hexl_path, pk.PkOffset(offset))
     return wanted
 
+def save_chunk(headers, chunk):
+    # 1) find the file based on the {md5}_{length}
+    # 2) append the given chunk bytes.
+    # 3) if the len(file) == length, assert md5.
+    pass
 
-@app.post("/sync")
+@app.post("/query")
 async def post_sync(request: fa.Request) -> fa.Response:
     body = await request.body()
     try:
-        manifest = mf.ManifestUnmarshalled(ppy.PpyBencoded(body))
+        manifest = mfu.ManifestUnmarshalled(ppy.PpyBencoded(body))
         wanted = wanted_for(manifest)
     except (ValueError, TypeError, KeyError) as e:
-        return error_response('bad manifest: %r' % (e,), 400)
+        import traceback
+        ppy.prnt(str(e))
+        traceback.print_tb(e.__traceback__)
+        return error_response('error', 400)
     return fa.Response(content=wanted.marshall(), media_type=BENCODE)
+
+@app.post("/sync")
+async def post_sync(request: fa.Request) -> fa.Response:
+    # todo: get metadata from xheaders.
+    headers = await request.body()
+    chunk = await request.body()
+    ppy.prnt("chunk", len(chunk))
+    ok = save_chunk(headers, chunk)
+    return fa.Response()

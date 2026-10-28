@@ -64,7 +64,7 @@ def recv_until_eof(sock):
     return _HTTP_EMPTY.join(parts)
 
 
-def build_request(host, port, method, path, body, content_type):
+def build_request(host, port, method, path, body, content_type, xheaders):
     # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyAsciiStr, ppy.PpyBytes, ppy.PpyAsciiStr) -> ppy.PpyBytes
     """Request head + body as bytes. host, method, path, content_type: ASCII native str."""
     parts = []  # type: pk.PkList[ppy.PpyAsciiStr]
@@ -72,6 +72,9 @@ def build_request(host, port, method, path, body, content_type):
     parts.append('Host: %s:%d\r\n' % (host, port))
     parts.append('Content-Type: %s\r\n' % content_type)
     parts.append('Content-Length: %d\r\n' % len(body))
+    if xheaders is not None:
+        for xh in xheaders:
+            parts.append('%s: %s\r\n' % (xh[0], xh[1]))
     parts.append('Connection: close\r\n\r\n')
     head = ''.join(parts)
     return ppy.a2b(head) + body
@@ -107,7 +110,7 @@ def parse_response(data):
     return {'status': status, 'headers': headers, 'body': body}
 
 
-def http_request(host, port, method, path, body, content_type, timeout_seconds):
+def http_request(host, port, method, path, body, content_type, timeout_seconds, xheaders):
     # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyAsciiStr, ppy.PpyBytes, ppy.PpyAsciiStr, int) -> pk.PkHttpResponse
     """One HTTP/1.0 request on a fresh connection. Raises HttpError or socket.error."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -116,24 +119,33 @@ def http_request(host, port, method, path, body, content_type, timeout_seconds):
         if settimeout is not None:
             settimeout(timeout_seconds)
         sock.connect((host, port))
-        send_all(sock, build_request(host, port, method, path, body, content_type))
+        request = build_request(
+            host,
+            port,
+            method,
+            path,
+            body,
+            content_type,
+            xheaders
+            )
+        send_all(sock, request)
         data = recv_until_eof(sock)
     finally:
         sock.close()
     return parse_response(data)
 
 
-def post_data(host, port, path, value, timeout_seconds):
+def post_data(host, port, path, value, timeout_seconds, xheaders=None):
     # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyBencoded, int) -> ppy.PpyBencoded
     """POST data, return the reply's body. Non-200 raises HttpError."""
-    r = http_request(host, port, 'POST', path, value, 'application/x-bencode', timeout_seconds)
+    r = http_request(host, port, 'POST', path, value, 'application/x-bencode', timeout_seconds, xheaders)
     if r['status'] != 200:
         raise HttpError("HTTP %d from %s: %r" % (r['status'], path, r['body'][:200]))
     return ppy.PpyBencoded(r['body'])
 
-def post_data_bencoded(host, port, path, value, timeout_seconds):
+def post_data_bencoded(host, port, path, value, timeout_seconds, xheaders=None):
     # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyBValue, int) -> ppy.PpyBValue
     """POST bencode(data), return the reply's bdecode(body). Non-200 raises HttpError."""
     bv = ppy.bencode(value)
-    body = post_data(host, port, path, bv, timeout_seconds)
+    body = post_data(host, port, path, bv, timeout_seconds, xheaders)
     return ppy.bdecode(body)

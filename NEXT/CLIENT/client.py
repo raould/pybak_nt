@@ -19,8 +19,15 @@ import wanted_sync as ws
 import http_client
 #portapy_pragma ALLOW_MODULE
 import smells
+#portapy_pragma ALLOW_MODULE
+import manifest as mf
+#portapy_pragma ALLOW_MODULE
+import manifest_unmarshalled as mfu
 
 _PYB_CHUNK_SIZE=1024*1024
+_HTTP_TIMEOUT_SEC=10
+
+# TODO: config / command line params for server address.
 
 # The naming strategy is chosen once, in main, and passed to everything that
 # touches a name or path as N (pk.PkNamingP). Those functions are generic over
@@ -41,180 +48,27 @@ crawl TODOs:
 - support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
 """
 
-# ---------------------------------------------------------------------------
+#----------------------------------------
 
-def stat_for_server(st):
-    # type: (pk.PkStat) -> ppy.PpyBDict
-    """os.stat/lstat result -> dict, portable from Python 2.0 to 3.x."""
-    fields = {}  # type: ppy.PpyBDict
-    fields[ppy.bkey('mode')] = st[stat.ST_MODE]
-    fields[ppy.bkey('ino')] = st[stat.ST_INO]
-    fields[ppy.bkey('dev')] = st[stat.ST_DEV]
-    fields[ppy.bkey('nlink')] = st[stat.ST_NLINK]
-    fields[ppy.bkey('size')] = st[stat.ST_SIZE]
-    # Indexing gives integer seconds on every version (only the st_mtime attribute
-    # can be a float); int() makes that explicit, since bencode has no floats.
-    fields[ppy.bkey('mtime')] = int(st[stat.ST_MTIME])
-    fields[ppy.bkey('ctime')] = int(st[stat.ST_CTIME])
-    mtime_ns = getattr(st, 'st_mtime_ns', None)       # 3.3+
-    if mtime_ns is not None:
-        fields[ppy.bkey('mtime_ns')] = mtime_ns
-    for name in ('st_blocks', 'st_file_attributes'):
-        value = getattr(st, name, None)
-        if value is not None:
-            fields[ppy.bkey(name[3:])] = value
-    # st_birthtime is a float (macOS, BSD, Windows 3.12+); bencode has no
-    # floats, so send whole seconds, or nanoseconds where Python has them.
-    birth_ns = getattr(st, 'st_birthtime_ns', None)      # 3.12+
-    if birth_ns is not None:
-        fields[ppy.bkey('birthtime_ns')] = birth_ns
-    birth = getattr(st, 'st_birthtime', None)
-    if birth is not None:
-        fields[ppy.bkey('birthtime')] = int(birth)
-    return fields
+def post_sender(hex_path_list, chunk, offset, system_metadata):
+    pass
 
-def meta_stats_for_server(meta):
-    # type: (pk.PkFileMetadata) -> ppy.PpyBDict
-    """only copy over what we really need to send."""
-    m = {}  # type: ppy.PpyBDict
-    st = meta['stat']
-    if st is not None:      # only sent when it differs from lstat
-        m[ppy.bkey('stat')] = stat_for_server(st)
-    m[ppy.bkey('lstat')] = stat_for_server(meta['lstat'])
-    return m
+def sync_one(hex_path_list, sender, offset, chunk_size, system_metadata, N):
+    pass
 
-def get_manifest_entry_sort_key(e):
-    # type: (ppy.PpyBDict) -> ppy.PpyBValue
-    return e[ppy.bkey('hexl_path')]
-def _add_ascii_fact(bd, key, value):
-    # type: (ppy.PpyBDict, ppy.PpyAsciiStr, pk.PkOptional[str]) -> None
-    """Add a fact as ASCII bytes. Missing or non-ASCII facts are left out, not mangled."""
-    if value is None:
-        return
-    try:
-        ppy.require_ascii_str(value)
-    except (ValueError, TypeError):
-        return
-    ppy.bd_add(bd, key, ppy.a2b(value))
-
-
-def manifest_header(N):
-    # type: (pk.PkNamingP[pk.PkOsName]) -> ppy.PpyBDict
-    """What is true for every entry of a manifest from this client: the naming
-    strategy and the facts about the client (display hints for the server)."""
-    header = {}  # type: ppy.PpyBDict
-    ppy.bd_add(header, 'name_kind', ppy.a2b(N.kind))
-    _add_ascii_fact(header, 'fs_codec', N.fs_codec)
-    _add_ascii_fact(header, 'fs_errors', N.fs_errors)
-    _add_ascii_fact(header, 'locale_codec', N.locale_codec)
-    _add_ascii_fact(header, 'platform', N.platform)
-    _add_ascii_fact(header, 'python', N.python)
-    _add_ascii_fact(header, 'hostname', N.hostname)
-    ppy.bd_add(header, 'win32', N.win32)
-    return header
-
-
-class Manifest:
-    def __init__(self, header):
-        # type: (ppy.PpyBDict) -> None
-        """header: from manifest_header(N), the same for every manifest of a run."""
-        self.entries = []  # type: pk.PkList[ppy.PpyBDict]
-        self.bmetadata = header
-    def get_name_kind(self):
-        # type: () -> ppy.PpyAsciiStr
-        return ppy.b2a(ppy.bd_get_bytes(self.bmetadata, 'name_kind'))
-    def to_debug_str(self):
-        # type: () -> str
-        return "%s %s" % (self.get_name_kind(), self.entries)
-    def add_file(self, path_list, classification, N): # "everything is a file" ha ha.
-        # type: (pk.PkOsPath[pk.PkOsName], pk.PkClassification, pk.PkNamingP[pk.PkOsName]) -> None
-        """ if the file can't be opened safely, it won't be entered into the manifest.
-        classification: the dict from classify_and_decide() for this entry. """
-        ppy.prnt('path', N.os_join_path(path_list))
-        try:
-            target = classification['target']
-            lst = classification['lst']
-            if target is None or lst is None:
-                raise IOError("no stat for a file classified as readable")
-            opened = cu.open_for_read(path_list, target, N)
-            fp = opened['fp']
-            st = opened['st']
-            if fp is None or st is None:
-                raise IOError("could not read file: %s errno %s" % (opened['state'], opened['err']))
-            try:
-                md5_bytes, length = util.md5_and_length(fp, 8192)
-            finally:
-                fp.close()
-            ppy.prnt(N.os_join_path(path_list), 'length', length, 'md5', md5_bytes)
-            file_metadata = { 'lstat': lst, 'stat': None }  # type: pk.PkFileMetadata
-            if lst != st:
-                file_metadata['stat'] = st
-            e = {}  # type: ppy.PpyBDict
-            ppy.bd_add(e, 'hexl_path', cu.to_hex_path_list(path_list, N))
-            ppy.bd_add(e, 'md5', util.md5_hex(md5_bytes))
-            ppy.bd_add(e, 'length', length)
-            ppy.bd_add(e, 'metadata', meta_stats_for_server(file_metadata))
-            self.entries.append(e)
-        except (IOError, OSError): # PermissionError
-            traceback.print_exc()
-            err = ppy.current_exception()
-            ppy.prntlog(ppy.PPY_ERROR, str(err))
-            ppy.prntlog(ppy.PPY_ERROR, repr(N.os_join_path(path_list)))
-    def marshall(self):
-        # type: () -> ppy.PpyBencoded
-        # enforce a canonical ordering, to make testing easier.
-        bd = {}  # type: ppy.PpyBDict
-        ppy.bd_add(bd, 'bmetadata', self.bmetadata)
-        sorted = ppy.sorted_list(self.entries, get_manifest_entry_sort_key)
-        ppy.bd_add(bd, 'entries', sorted)
-        return ppy.bencode(bd)
-
-def fake_sender(hex_path_list, chunk, pos):
-    # type: (pk.PkHexPath, pk.PkFileBytes, pk.PkOffset) -> None
-    ppy.prnt('>>> sending', pos, len(chunk), hex_path_list)
-
-def sync_one(hex_path_list, sender, offset, chunk_size, N):
-    # type: (pk.PkHexPath, pk.PkSender, pk.PkOffset, int, pk.PkNamingP[pk.PkOsName]) -> None
-    """Send one wanted file from offset. The sender gets the hexl_path, as the server knows it."""
-    path_list = cu.from_hex_path_list(hex_path_list, N)
-    classified = classify_entry(path_list, N)
-    target = classified['target']
-    if (classified['kind'] != 'file' and classified['kind'] != 'link-file') or target is None:
-        ppy.prntlog(ppy.PPY_WARN, 'not a file any more, not sent: %r' % (N.os_join_path(path_list),))
-        return
-    opened = cu.open_for_read(path_list, target, N)
-    f = opened['fp']
-    if f is None:
-        ppy.prntlog(ppy.PPY_WARN, 'could not open, not sent: %r %s errno %s' % (N.os_join_path(path_list), opened['state'], opened['err']))
-        return
-    pos = offset
-    try:
-        f.seek(offset)
-        while 1:
-            chunk = pk.PkFileBytes(f.read(chunk_size))
-            if not chunk:
-                break
-            sender(hex_path_list, chunk, pos)
-            pos = pk.PkOffset(pos + len(chunk))
-    finally:
-        f.close()
-
-def fake_server_sync(data):
+def server_request(manifest):
     # type: (ppy.PpyBencoded) -> ppy.PpyBencoded
-    # testing http.
-    # http_client.post_data('0.0.0.0', 8000, '/sync', data, 10)
-
-    # fake response: send all of every file.
-    manifest = mf.ManifestUnmarshalled(data)
-    ppy.prnt('client manifest', manifest.to_debug_str())
-    wanted = ws.WantedSync()
-    for e in manifest.entries:
+    data = manifest.marshall()
+    body = http_client.post_data('0.0.0.0', 8000, '/query', data, _HTTP_TIMEOUT_SEC)
+    wanted = ws.WantedSyncUnmarshalled(body)
+    for e in unmarsh.entries:
         wanted.add_file(
-            ws.hex_path_list_from_bd(e),
-            pk.PkOffset(0) # todo: server has to introspect storage.
+            e['md5'],
+            e['length'],
+            0,
+            e['hex_path']
             )
-    ppy.prnt('response', wanted.to_debug_str())
-    return wanted.marshall()
+    return wanted
 
 def sync_manifest(manifest, N):
     # type: (Manifest, pk.PkNamingP[pk.PkOsName]) -> None
@@ -222,77 +76,18 @@ def sync_manifest(manifest, N):
     # 1) send manifest to the server.
     # 2) get back the 'wanted' list (subset of manifest).
     # 3) for each wanted, send it (chunked, with seek) to the server.
-    response = fake_server_sync(manifest.marshall())
-    ppy.prnt('response', response)
-    wanted = ws.WantedSyncUnmarshalled(response)
+    wanted = server_request(manifest)
     ppy.prnt('wanted', wanted.to_debug_str())
     for w in wanted.entries:
-        ppy.prnt('w', w.hex_path_list, w.offset)
-        sync_one(w.hex_path_list, fake_sender, w.offset, _PYB_CHUNK_SIZE, N)
+        ppy.prnt('w', w['offset'], w['hex_path'])
+        sync_one(w['hex_path'],
+                 post_sender,
+                 w['offset'],
+                 _PYB_CHUNK_SIZE,
+                 manifest.get_system_metadata(),
+                 N)
 
-"""Crawl classification and policy for the pybak client.
-
-Portable from Python 2.0 to 3.x (portapy subset). Uses only Python's own
-interfaces: os.lstat, os.stat, os.open, os.fstat, the stat and errno modules
-and st_dev/st_ino. No mount tables, no external commands, no lists of
-filesystem types.
-
-Vocabulary used in this module. Each term means exactly this and nothing
-else, because "file" on Unix means a dozen different things.
-
-  entry        A name inside a directory, as returned by os.listdir().
-  lstat        Facts about the entry itself (os.lstat: never follows links).
-  target       What the entry resolves to (os.stat: follows symlinks).
-               For a non-link entry, target is the entry itself.
-  kind         What the entry is, from lstat and, for links, its target:
-                 'dir'            a directory
-                 'file'           a regular file: bytes on disk, finite size
-                 'special'        anything else that is not a link: FIFO,
-                                  character or block device, socket, door
-                 'link-dir'       symlink (or Windows directory reparse point
-                                  such as a junction) whose target is a dir
-                 'link-file'      symlink whose target is a regular file
-                 'link-special'   symlink whose target is a special
-                 'link-dangling'  symlink whose target does not exist, or
-                                  that loops (ENOENT, ENOTDIR, ELOOP)
-                 'vanished'       the entry disappeared before lstat
-                                  (ENOENT, ENOTDIR)
-                 'error'          lstat or stat failed for any other reason:
-                                  permission denied, name too long, I/O
-                                  error, ... The errno is returned with it.
-  allowed devs The st_dev values the crawl may read from: the devices of the
-               crawl roots. Listing a second disk as a root allows its device.
-  relation     The target's device compared with the allowed devices:
-                 'allowed'   its st_dev is one of the allowed devices
-                 'other'     it is not: another filesystem of any sort
-                             (a pseudo filesystem such as /proc, a network
-                             share, a USB stick, a RAM disk, ...)
-                 'unknown'   st_dev is 0 (Python 2 on Windows): no answer
-  dir key      (st_dev, st_ino) of a directory, or None when the platform
-               reports st_ino as 0 (Python 2 on Windows): no identity.
-  ancestors    The dir keys of the directories from the crawl root down to
-               the directory being listed, root first. Each pending directory
-               carries its own list: its parent's list plus its own key.
-  ancestry     The target compared with the ancestors:
-                 'ok'        not one of them, and not too deep
-                 'loop'      its dir key is one of the ancestors: entering
-                             it would repeat the path forever (a bind mount
-                             of a parent on the same device, for example)
-                 'too-deep'  the ancestors already number MAX_DEPTH: the
-                             backstop where dir keys are not available
-  action       What the crawler does (archiving, not restoring: a link to a
-               file is archived as the file's bytes; everything else that is
-               not a plain dir or file is left out):
-                 'descend'   enter the directory
-                 'read'      read and upload the bytes (for 'link-file',
-                             the target's bytes), opened with
-                             open_for_read()
-                 'skip'      leave it out
-
-Rules of the code: classification functions answer one question each; the
-policy is the POLICY table below; decide() only looks it up. A combination
-no row matches is skipped, never read.
-"""
+# ---------------------------------------------------------------------------
 
 S_ISLNK = getattr(stat, 'S_ISLNK', None)        # missing on some ports
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400             # Windows, Python 3.5+
@@ -346,30 +141,29 @@ def kind_for_target_error(err):
         return 'link-dangling'
     return 'error'
 
-
-def classify_entry_T(path_list, N):
-    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> pk.PkTuple[str, pk.PkOptional[pk.PkStat], pk.PkOptional[pk.PkStat], pk.PkOptional[int]]
-    """Return (kind, lstat_result, target_stat, errno) for one entry.
-    target_stat is what the crawler would read or descend into: the lstat
-    result for non-links, the followed os.stat result for links, and None
-    when a stat failed. errno is None unless a stat failed.
-    """
-    try:
-        lst = ppy.get_lstat()(N.os_join_path(path_list))
-    except (OSError, IOError):
-        err = util.current_errno()
-        return (kind_for_lstat_error(err), None, None, err)
-    mode = lst[stat.ST_MODE]
-    if not (is_link_mode(mode) or is_dir_reparse_point(lst)):
-        return (kind_of_mode(mode), lst, lst, None)
-    try:
-        target = os.stat(N.os_join_path(path_list))
-    except (OSError, IOError):
-        err = util.current_errno()
-        return (kind_for_target_error(err), lst, None, err)
-    return ('link-' + kind_of_mode(target[stat.ST_MODE]), lst, target, None)
 def classify_entry(path_list, N):
     # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> pk.PkEntryKind
+    def classify_entry_T(path_list, N):
+        # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> pk.PkTuple[str, pk.PkOptional[pk.PkStat], pk.PkOptional[pk.PkStat], pk.PkOptional[int]]
+        """Return (kind, lstat_result, target_stat, errno) for one entry.
+        target_stat is what the crawler would read or descend into: the lstat
+        result for non-links, the followed os.stat result for links, and None
+        when a stat failed. errno is None unless a stat failed.
+        """
+        try:
+            lst = ppy.get_lstat()(N.os_join_path(path_list))
+        except (OSError, IOError):
+            err = util.current_errno()
+            return (kind_for_lstat_error(err), None, None, err)
+        mode = lst[stat.ST_MODE]
+        if not (is_link_mode(mode) or is_dir_reparse_point(lst)):
+            return (kind_of_mode(mode), lst, lst, None)
+        try:
+            target = os.stat(N.os_join_path(path_list))
+        except (OSError, IOError):
+            err = util.current_errno()
+            return (kind_for_target_error(err), lst, None, err)
+        return ('link-' + kind_of_mode(target[stat.ST_MODE]), lst, target, None)
     t = classify_entry_T(path_list, N)
     return {
         'kind': t[0],
@@ -518,12 +312,11 @@ def crawl_tree(root_path_list, N):
     allowed_devs = allowed_devs_for_roots([root_path_list], N)
     ppy.prnt('allowed_devs', allowed_devs)
     root_key = dir_key(os.stat(N.os_join_path(root_path_list)))
-    header = manifest_header(N)
-    ppy.prnt('manifest header', header)
-    crawl_dir(root_path_list, [root_key], allowed_devs, header, N)
+    system_metadata = mf.system_metadata(N)
+    crawl_dir(root_path_list, [root_key], allowed_devs, system_metadata, N)
 
 
-def crawl_dir(root_path_list, root_key, allowed_devs, header, N):
+def crawl_dir(root_path_list, root_key, allowed_devs, system_metadata, N):
     # type: (pk.PkOsPath[pk.PkOsName], pk.PkDirKey, pk.PkList[int], ppy.PpyBDict, pk.PkNamingP[pk.PkOsName]) -> None
     """Depth-first and iterative: a local stack of directories still to visit.
     Each loop lists one directory, syncs its files, and pushes its subdirectories.
@@ -541,7 +334,7 @@ def crawl_dir(root_path_list, root_key, allowed_devs, header, N):
         if not is_still_dir(dir_path_list, expected, N):
             ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %r' % (N.os_join_path(dir_path_list),))
             continue
-        cur_manifest = Manifest(header)
+        cur_manifest = mf.Manifest(system_metadata)
         entries = []  # type: pk.PkList[pk.PkOsName]
         try:
             entries = N.listdir(dir_path_list)
@@ -561,6 +354,10 @@ def crawl_dir(root_path_list, root_key, allowed_devs, header, N):
                     pending_expected.append(target)
                 elif action == 'read':
                     cur_manifest.add_file(entry_path_list, classification, N)
+                    # do not commit this testing hack...
+                    if len(cur_manifest.entries) == 2:
+                        break
+                    # ...do not commit this testing hack.
                 elif action != 'skip':
                     raise Exception(action)
             except (IOError, OSError):
@@ -570,7 +367,6 @@ def crawl_dir(root_path_list, root_key, allowed_devs, header, N):
         ppy.prnt('---', N.os_join_path(dir_path_list), cur_manifest.entries)
         if len(cur_manifest.entries) > 0:     # no request for directories without files
             sync_manifest(cur_manifest, N)
-        break # do not commit this testing hack.
  
 # ----------------------------------------
 # (1) we have to obtain the names of paths + files, and know what their type is.

@@ -4,8 +4,8 @@ TYPES.md explains the pattern). Use them through 'import pk_types as pk'.
 
 Names and paths mirror each other on the two sides:
 
-    this machine                              the wire
-    PkOsName: one name                        PkHexName: one hexlified name
+    this machine                                the wire
+    PkOsName: one name                          PkHexName: one hexlified name
     PkOsPath[PkOsName]: [name, ...] root first  PkHexPath: [PkHexName, ...] root first
 
 A run uses exactly one name type, chosen at startup by naming.choose_naming():

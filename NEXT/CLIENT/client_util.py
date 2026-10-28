@@ -77,24 +77,3 @@ def open_for_read(path_list, target_stat, N):
         'state': t[2],
         'err': t[3]
         }
-
-
-# ---------------------------------------------------------------------------
-# Path lists <-> hexl_path. Needs the client's naming strategy (N).
-
-def to_hex_path_list(path_list, N):
-    # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> pk.PkHexPath
-    """PkOsPath -> PkHexPath, element by element, root first."""
-    hexes = []  # type: pk.PkList[pk.PkHexName]
-    for name in path_list:
-        hexes.append(util.hex_name(N.os_name_to_wire(name)))
-    return pk.PkHexPath(hexes)
-
-
-def from_hex_path_list(hex_path_list, N):
-    # type: (pk.PkHexPath, pk.PkNamingP[pk.PkOsName]) -> pk.PkOsPath[pk.PkOsName]
-    """Exact inverse of to_hex_path_list() for the client that made it: the server never calls this."""
-    names = []  # type: pk.PkOsPath[pk.PkOsName]
-    for h in hex_path_list:
-        names.append(N.wire_to_os_name(util.unhex_name(h)))
-    return names
