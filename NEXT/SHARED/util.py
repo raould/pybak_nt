@@ -1,5 +1,4 @@
-"""Functions shared by the pybak client and server. Portable from Python 2.0 to 3.x.
-
+"""Catch-all, including functions shared by the pybak client and server. Portable from Python 2.0 to 3.x.
 The server is Python 3 only, but uses these so that both ends compute md5s and
 hex names the same way. Client-only code (crawling, naming) is in CLIENT/.
 """
@@ -10,6 +9,10 @@ import sys
 import binascii
 # portapy_pragma ALLOW_MODULE
 import pk_types as pk
+
+
+MANIFEST_SYSTEM_METADATA_KEY = 'system_metadata'
+MANIFEST_ENTRIES_KEY = 'entries'
 
 # ----------------------------------------
 # support MD5 file hashing.

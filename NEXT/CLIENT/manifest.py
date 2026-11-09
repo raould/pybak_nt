@@ -6,40 +6,12 @@ import client_util as cu
 # portapy_pragma ALLOW_MODULE
 import util
 
-# ---------------------------------------------------------------------------
-
-
-def _get_manifest_entry_sort_key(e):
-    return e['hex_path']
-
-
-def _add_int_kv(d, key, value):
-    """Add a fact as a number. Key must be ASCII."""
-    if value is None:
-        return
-    try:
-        ppy.require_ascii_str(key)
-    except (ValueError, TypeError):
-        return
-    d[key] = value
-
-
-def _add_ascii_kv(d, key, value):
-    """Add a fact as ASCII bytes. Missing or non-ASCII facts are left out, not mangled."""
-    if value is None:
-        return
-    try:
-        ppy.require_ascii_str(key)
-        ppy.require_ascii_str(value)
-    except (ValueError, TypeError):
-        return
-    d[key] = value
-
 
 def system_metadata(N):  # todo: implement in metadata_unmarshall
     """What is true for every entry of a manifest from this client: the naming
     strategy and the facts about the client (display hints for the server)."""
     header = {}
+    header['namingid'] = ppy.a2b(N.namingid)
     header['name_kind'] = ppy.a2b(N.kind)
     header['fs_codec'] = ppy.a2b(N.fs_codec)
     header['fs_errors'] = ppy.a2b(N.fs_errors)
@@ -139,15 +111,14 @@ class Manifest:
             finally:
                 fp.close()
             ppy.prnt('length', length, 'md5', md5)
-            # type: pk.PkFileMetadata
-            file_metadata = {'lstat': lst, 'stat': None}
-            if lst != st:
-                file_metadata['stat'] = st
             e = {
                 'md5': ppy.a2b(md5),
                 'length': length,
                 'hex_path': util.to_wire_path_list(path_list, N),
             }
+            file_metadata = {'lstat': lst, 'stat': None}
+            if lst != st:
+                file_metadata['stat'] = st
             self.add_meta_stats_for_server(e, file_metadata)
             self.entries.append(e)
         except (IOError, OSError):  # PermissionError
@@ -159,8 +130,9 @@ class Manifest:
     def marshall(self):
         # keep it just a 1-level-deep dict.
         marsh = {
-            ppy.a2b('system_metadata'): self.system_metadata,
-            ppy.a2b('entries'): self.entries
+            ppy.a2b(util.MANIFEST_SYSTEM_METADATA_KEY): self.system_metadata,
+            # todo: sort entries into a canonical ordering, to make test easier. (ha ha)
+            ppy.a2b(util.MANIFEST_ENTRIES_KEY): self.entries
         }
         try:
             return ppy.bencode(marsh)
