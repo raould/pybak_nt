@@ -22,10 +22,9 @@ class ManifestUnmarshalled:
         unmarsh = ppy.bv_dict(ppy.bdecode(data))
 
         collating = {}
-        for bk in unmarsh.keys():
-            k = ppy.b2a(bk)
+        for k in unmarsh.keys():
             kp = k.split(util.SEP)
-            v = unmarsh[bk]
+            v = unmarsh[k]
             if k.startswith(util.SYSTEM_METADATA_PREFIX):
                 assert len(kp) == 2
                 smkey = kp[1]

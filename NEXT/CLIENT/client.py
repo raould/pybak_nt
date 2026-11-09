@@ -3,29 +3,29 @@ import sys
 import os
 import stat
 import traceback
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import naming
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import pk_types as pk
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import client_util as cu
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import util
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import manifest as mf
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import wanted_sync as ws
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import http_client
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import smells
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import manifest as mf
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import manifest_unmarshalled as mfu
 
-_PYB_CHUNK_SIZE=1024*1024
-_HTTP_TIMEOUT_SEC=10
+_PYB_CHUNK_SIZE = 1024*1024
+_HTTP_TIMEOUT_SEC = 10
 
 # TODO: config / command line params for server address.
 
@@ -48,18 +48,27 @@ crawl TODOs:
 - support macOS resource forks, NTFS alternate data streams, extended attributes and ACLs beyond the extras field, and snapshots for consistency (VSS, APFS, LVM, ZFS).
 """
 
-#----------------------------------------
+# ----------------------------------------
+
 
 def post_sender(hex_path_list, chunk, offset, system_metadata):
     pass
 
+
 def sync_one(hex_path_list, sender, offset, chunk_size, system_metadata, N):
     pass
 
+
 def server_request(manifest):
-    # type: (ppy.PpyBencoded) -> ppy.PpyBencoded
     data = manifest.marshall()
-    body = http_client.post_data('0.0.0.0', 8000, '/query', data, _HTTP_TIMEOUT_SEC)
+    # ---------- TESTING:
+    un = mfu.ManifestUnmarshalled(data)
+    ppy.prnt(un)
+    return None
+    # ---------- TODO:
+    # type: (ppy.PpyBencoded) -> ppy.PpyBencoded
+    body = http_client.post_data(
+        '0.0.0.0', 8000, '/query', data, _HTTP_TIMEOUT_SEC)
     wanted = ws.WantedSyncUnmarshalled(body)
     for e in unmarsh.entries:
         wanted.add_file(
@@ -67,8 +76,9 @@ def server_request(manifest):
             e['length'],
             0,
             e['hex_path']
-            )
+        )
     return wanted
+
 
 def sync_manifest(manifest, N):
     # type: (Manifest, pk.PkNamingP[pk.PkOsName]) -> None
@@ -89,6 +99,7 @@ def sync_manifest(manifest, N):
 
 # ---------------------------------------------------------------------------
 
+
 S_ISLNK = getattr(stat, 'S_ISLNK', None)        # missing on some ports
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400             # Windows, Python 3.5+
 
@@ -96,6 +107,7 @@ MAX_DEPTH = 256
 
 # ---------------------------------------------------------------------------
 # Kind: what an entry is.
+
 
 def is_link_mode(mode):
     # type: (int) -> int
@@ -141,6 +153,7 @@ def kind_for_target_error(err):
         return 'link-dangling'
     return 'error'
 
+
 def classify_entry(path_list, N):
     # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> pk.PkEntryKind
     def classify_entry_T(path_list, N):
@@ -170,10 +183,11 @@ def classify_entry(path_list, N):
         'lst': t[1],
         'target': t[2],
         'err': t[3]
-        }
+    }
 
 # ---------------------------------------------------------------------------
 # Relation: is the target on one of the allowed devices?
+
 
 def allowed_devs_for_roots(root_path_lists, N):
     # type: (pk.PkList[pk.PkOsPath[pk.PkOsName]], pk.PkNamingP[pk.PkOsName]) -> pk.PkList[int]
@@ -269,7 +283,8 @@ def classify_and_decide_T(path_list, allowed_devs, ancestors, N):
     """
     classified = classify_entry(path_list, N)
     target = classified['target']
-    action = decide(classified['kind'], fs_relation(target, allowed_devs), ancestry(target, ancestors))
+    action = decide(classified['kind'], fs_relation(
+        target, allowed_devs), ancestry(target, ancestors))
     # Avoid archiving existing archives. Only for files the policy would read:
     # the smell tests open files, so they must never see a FIFO or a device.
     if action == 'read' and target is not None:
@@ -280,6 +295,8 @@ def classify_and_decide_T(path_list, allowed_devs, ancestors, N):
             classified['lst'],
             target,
             classified['err'])
+
+
 def classify_and_decide(path_list, allowed_devs, ancestors, N):
     # type: (pk.PkOsPath[pk.PkOsName], pk.PkList[int], pk.PkList[pk.PkDirKey], pk.PkNamingP[pk.PkOsName]) -> pk.PkClassification
     t = classify_and_decide_T(path_list, allowed_devs, ancestors, N)
@@ -289,10 +306,10 @@ def classify_and_decide(path_list, allowed_devs, ancestors, N):
         'lst': t[2],
         'target': t[3],
         'err': t[4]
-        }
+    }
 
 
-#----------------------------------------
+# ----------------------------------------
 
 def is_still_dir(dir_path_list, expected, N):
     # type: (pk.PkOsPath[pk.PkOsName], pk.PkOptional[pk.PkStat], pk.PkNamingP[pk.PkOsName]) -> int
@@ -306,6 +323,7 @@ def is_still_dir(dir_path_list, expected, N):
     now = classify_entry(dir_path_list, N)
     target = now['target']
     return now['kind'] == 'dir' and target is not None and cu.is_safe_stat(target, expected)
+
 
 def crawl_tree(root_path_list, N):
     # type: (pk.PkOsPath[pk.PkOsName], pk.PkNamingP[pk.PkOsName]) -> None
@@ -324,7 +342,8 @@ def crawl_dir(root_path_list, root_key, allowed_devs, system_metadata, N):
       pending_path_lists[i]  its path list
       pending_ancestors[i]   the dir keys of it and every directory above it (loop detection)
       pending_expected[i]    its stat when classified, re-checked before listing (None for the root)"""
-    pending_path_lists = [root_path_list]  # type: pk.PkList[pk.PkOsPath[pk.PkOsName]]
+    pending_path_lists = [
+        root_path_list]  # type: pk.PkList[pk.PkOsPath[pk.PkOsName]]
     pending_ancestors = [[root_key]]  # type: pk.PkList[pk.PkList[pk.PkDirKey]]
     pending_expected = [None]  # type: pk.PkList[pk.PkOptional[pk.PkStat]]
     while len(pending_path_lists) > 0:
@@ -332,7 +351,8 @@ def crawl_dir(root_path_list, root_key, allowed_devs, system_metadata, N):
         ancestors = pending_ancestors.pop()
         expected = pending_expected.pop()
         if not is_still_dir(dir_path_list, expected, N):
-            ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %r' % (N.os_join_path(dir_path_list),))
+            ppy.prntlog(ppy.PPY_WARN, 'changed before listing, skipped: %r' % (
+                N.os_join_path(dir_path_list),))
             continue
         cur_manifest = mf.Manifest(system_metadata)
         entries = []  # type: pk.PkList[pk.PkOsName]
@@ -340,11 +360,13 @@ def crawl_dir(root_path_list, root_key, allowed_devs, system_metadata, N):
             entries = N.listdir(dir_path_list)
         except (IOError, OSError):
             pe = ppy.current_exception()
-            ppy.prntlog(ppy.PPY_WARN, 'cannot list %r: %s' % (N.os_join_path(dir_path_list), pe))
+            ppy.prntlog(ppy.PPY_WARN, 'cannot list %r: %s' %
+                        (N.os_join_path(dir_path_list), pe))
         for entry in entries:
             entry_path_list = N.child(dir_path_list, entry)
             try:
-                classification = classify_and_decide(entry_path_list, allowed_devs, ancestors, N)
+                classification = classify_and_decide(
+                    entry_path_list, allowed_devs, ancestors, N)
                 action = classification['action']
                 ppy.prnt('???', action, N.os_join_path(entry_path_list))
                 if action == 'descend':
@@ -363,13 +385,15 @@ def crawl_dir(root_path_list, root_key, allowed_devs, system_metadata, N):
             except (IOError, OSError):
                 # One bad entry must not end the whole crawl: log, go on.
                 pe = ppy.current_exception()
-                ppy.prntlog(ppy.PPY_ERROR, 'entry failed %r: %s' % (N.os_join_path(entry_path_list), pe))
+                ppy.prntlog(ppy.PPY_ERROR, 'entry failed %r: %s' %
+                            (N.os_join_path(entry_path_list), pe))
         ppy.prnt('---', N.os_join_path(dir_path_list), cur_manifest.entries)
         if len(cur_manifest.entries) > 0:     # no request for directories without files
             sync_manifest(cur_manifest, N)
- 
+
 # ----------------------------------------
 # (1) we have to obtain the names of paths + files, and know what their type is.
+
 
 def get_start_arg():
     # type: () -> pk.PkArgvStr
@@ -395,7 +419,8 @@ def main():
     N = naming.choose_naming()
     # windows on python 2.x is uniquely broken.
     if N.is_lossy:
-        sys.stderr.write("FAIL: unsupported due to lossy conversion issues inherent in Python+OS+FS, sorry.\n")
+        sys.stderr.write(
+            "FAIL: unsupported due to lossy conversion issues inherent in Python+OS+FS, sorry.\n")
         sys.exit(1)
     arg = get_start_arg()
     # The only place both name types appear. The branches look the same, but
