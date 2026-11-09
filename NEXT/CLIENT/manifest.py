@@ -11,13 +11,13 @@ def system_metadata(N):  # todo: implement in metadata_unmarshall
     """What is true for every entry of a manifest from this client: the naming
     strategy and the facts about the client (display hints for the server)."""
     header = {}
-    header['name_kind'] = ppy.a2b(N.kind)
-    header['fs_codec'] = ppy.a2b(N.fs_codec)
-    header['fs_errors'] = ppy.a2b(N.fs_errors)
-    header['locale_codec'] = ppy.a2b(N.locale_codec)
-    header['platform'] = ppy.a2b(N.platform)
-    header['python'] = ppy.a2b(N.python)
-    header['hostname'] = ppy.a2b(N.hostname)
+    header['name_kind'] = N.kind
+    header['fs_codec'] = N.fs_codec
+    header['fs_errors'] = N.fs_errors
+    header['locale_codec'] = N.locale_codec
+    header['platform'] = N.platform
+    header['python'] = N.python
+    header['hostname'] = N.hostname
     if N.win32:
         is_win32 = 1
     else:
@@ -37,7 +37,7 @@ class Manifest:
         self.system_metadata = system_metadata
 
     def get_name_kind(self):
-        return ppy.b2a(self.system_metadata['name_kind'])
+        return self.system_metadata['name_kind']
 
     def get_system_metadata(self):
         return self.system_metadata
@@ -111,7 +111,7 @@ class Manifest:
                 fp.close()
             ppy.prnt('length', length, 'md5', md5)
             e = {
-                'md5': ppy.a2b(md5),
+                'md5': md5,
                 'length': length,
                 'hex_path': util.to_wire_path_list(path_list, N),
             }
@@ -129,9 +129,9 @@ class Manifest:
     def marshall(self):
         # keep it just a 1-level-deep dict.
         marsh = {
-            ppy.a2b(util.MANIFEST_SYSTEM_METADATA_KEY): self.system_metadata,
+            util.MANIFEST_SYSTEM_METADATA_KEY: self.system_metadata,
             # todo: sort entries into a canonical ordering, to make test easier. (ha ha)
-            ppy.a2b(util.MANIFEST_ENTRIES_KEY): self.entries
+            util.MANIFEST_ENTRIES_KEY: self.entries
         }
         try:
             return ppy.bencode(marsh)

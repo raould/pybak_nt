@@ -94,25 +94,13 @@ def current_errno():
 # Path lists <-> hexl_path. Needs the client's naming strategy (N).
 
 
-def name_to_wire_list(path_list, N):
-    wire = []
-    for name in path_list:
-        wire.append(N.os_name_to_wire(name))
-    return wire
-
-
-def wire_to_name_list(wire_list, N):
-    names = []
-    for wire in wire_list:
-        names.append(N.wire_to_os_name(wire))
-    return names
-
-
 def to_wire_path_list(path_list, N):
     ws = []
     for name in path_list:
         ws.append(
-            N.os_name_to_wire(name)
+            hex_name(
+                N.os_name_to_wire(name)
+            )
         )
     return ws
 
@@ -121,6 +109,8 @@ def from_wire_path_list(wire_path_list, N):
     names = []
     for w in wire_path_list:
         names.append(
-            N.wire_to_os_name(w)
+            N.wire_to_os_name(
+                unhex_name(w)
+            )
         )
     return names

@@ -12,13 +12,13 @@ import naming
 def un_system_metadata(data):
     ppy.prnt('un_system_metadata', data)
     un = {}
-    un['name_kind'] = ppy.b2a(data['name_kind'])
-    un['fs_codec'] = ppy.b2a(data['fs_codec'])
-    un['fs_errors'] = ppy.b2a(data['fs_errors'])
-    un['locale_codec'] = ppy.b2a(data['locale_codec'])
-    un['platform'] = ppy.b2a(data['platform'])
-    un['python'] = ppy.b2a(data['python'])
-    un['hostname'] = ppy.b2a(data['hostname'])
+    un['name_kind'] = data['name_kind']
+    un['fs_codec'] = data['fs_codec']
+    un['fs_errors'] = data['fs_errors']
+    un['locale_codec'] = data['locale_codec']
+    un['platform'] = data['platform']
+    un['python'] = data['python']
+    un['hostname'] = data['hostname']
     un['is_win32'] = data['is_win32']
     return un
 
@@ -26,7 +26,7 @@ def un_system_metadata(data):
 def un_entry(data, N):
     ppy.prnt('un_entry', data)
     e = {}
-    e['md5'] = ppy.b2a(data['md5'])
+    e['md5'] = data['md5']
     e['length'] = data['length']
     e['os_path'] = util.from_wire_path_list(data['hex_path'], N)
     e['lstat'] = data['lstat']
@@ -49,7 +49,7 @@ class ManifestUnmarshalled:
             self.entries.append(un_entry(e, N))
 
     def get_name_kind(self):
-        return self.system_metadata[ppy.a2b('name_kind')]
+        return self.system_metadata['name_kind']
 
     def get_system_metadata(self):
         return self.system_metadata
