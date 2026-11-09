@@ -12,7 +12,6 @@ import naming
 def un_system_metadata(data):
     ppy.prnt('un_system_metadata', data)
     un = {}
-    un['namindid'] = ppy.b2a(data['namingid'])
     un['name_kind'] = ppy.b2a(data['name_kind'])
     un['fs_codec'] = ppy.b2a(data['fs_codec'])
     un['fs_errors'] = ppy.b2a(data['fs_errors'])
@@ -39,9 +38,11 @@ class ManifestUnmarshalled:
     def __init__(self, data):
         # type: (ppy.PpyBencoded) -> None
         unmarsh = ppy.bv_dict(ppy.bdecode(data))
+
         smd = unmarsh[util.MANIFEST_SYSTEM_METADATA_KEY]
         self.system_metadata = un_system_metadata(smd)
-        N = naming.make_naming(ppy.b2a(smd['namingid']))
+
+        N = naming.make_naming(self.get_name_kind())
         es = unmarsh[util.MANIFEST_ENTRIES_KEY]
         self.entries = []
         for e in es:

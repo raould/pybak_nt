@@ -11,7 +11,6 @@ def system_metadata(N):  # todo: implement in metadata_unmarshall
     """What is true for every entry of a manifest from this client: the naming
     strategy and the facts about the client (display hints for the server)."""
     header = {}
-    header['namingid'] = ppy.a2b(N.namingid)
     header['name_kind'] = ppy.a2b(N.kind)
     header['fs_codec'] = ppy.a2b(N.fs_codec)
     header['fs_errors'] = ppy.a2b(N.fs_errors)

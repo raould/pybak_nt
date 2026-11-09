@@ -272,9 +272,8 @@ def _split_name(name, sep):
 class _NamingBase:   # no '()': empty parentheses are a syntax error before Python 2.5
     """What both strategies carry: their kind, and the facts about this client."""
 
-    def __init__(self, _namingid, _kind, _is_lossy):
+    def __init__(self, _kind, _is_lossy):
         # type: (str, int) -> None
-        self.namingid = _namingid
         self.kind = pk.PkNameKind(_kind)
         self.is_lossy = _is_lossy
         self.fs_codec = _interpreter_name_codec()
@@ -289,9 +288,9 @@ class _NamingBase:   # no '()': empty parentheses are a syntax error before Pyth
 class BytesNaming(_NamingBase):
     """Names are bytes: they are their own wire bytes."""
 
-    def __init__(self, namingid, kind, is_lossy, argv_to_root_fn):
+    def __init__(self, kind, is_lossy, argv_to_root_fn):
         # type: (str, int, ppy.PpyCallable[[pk.PkArgvStr], bytes]) -> None
-        _NamingBase.__init__(self, namingid, kind, is_lossy)
+        _NamingBase.__init__(self, kind, is_lossy)
         self._argv_to_root = argv_to_root_fn
 
     def argv_to_os_path(self, arg):
@@ -334,9 +333,9 @@ class BytesNaming(_NamingBase):
 class TextNaming(_NamingBase):
     """Names are text from the Windows wide API; UTF-16LE code units on the wire."""
 
-    def __init__(self, namingid, kind, argv_to_root_fn):
+    def __init__(self, kind, argv_to_root_fn):
         # type: (str, ppy.PpyCallable[[pk.PkArgvStr], ppy.PpyText]) -> None
-        _NamingBase.__init__(self, namingid, kind, 0)
+        _NamingBase.__init__(self, kind, 0)
         self._argv_to_root = argv_to_root_fn
 
     def argv_to_os_path(self, arg):
@@ -395,32 +394,32 @@ if MYPY:
     NamingChoice = typing.Union[BytesNaming, TextNaming]
 
 
-def make_win_clear_enc():
+def make_PK_WIN_CODEPAGE():
     # type: () -> BytesNaming
     """Windows, Python 2.0-2.2 or 9x/ME: names through the ANSI code page. LOSSY."""
-    ppy.prnt('make_win_clear_enc')
-    return BytesNaming('make_win_clear_enc', PK_WIN_CODEPAGE, 1, _argv_codepage_bytes)
+    ppy.prnt('make_PK_WIN_CODEPAGE')
+    return BytesNaming(PK_WIN_CODEPAGE, 1, _argv_codepage_bytes)
 
 
-def make_clear_enc():
+def make_PK_NATIVE_BYTES():
     # type: () -> BytesNaming
     """POSIX (and macOS), every Python: names are the filesystem's own bytes."""
-    ppy.prnt('make_clear_enc')
-    return BytesNaming('make_clear_enc', PK_NATIVE_BYTES, 0, _argv_to_bytes)
+    ppy.prnt('make_PK_NATIVE_BYTES')
+    return BytesNaming(PK_NATIVE_BYTES, 0, _argv_to_bytes)
 
 
-def make_utf16le_enc():
+def make_PK_WIN_UTF16LE():
     # type: () -> TextNaming
     """Windows, Python 2.3-3.5: names are text from the wide API; UTF-16LE on the wire."""
-    ppy.prnt('make_utf16le_enc')
-    return TextNaming('make_utf16le_enc', PK_WIN_UTF16LE, _argv_to_text)
+    ppy.prnt('make_PK_WIN_UTF16LE')
+    return TextNaming(PK_WIN_UTF16LE, _argv_to_text)
 
 
-def make_win_utf8_enc():
+def make_PK_WIN_UTF8():
     # type: () -> BytesNaming
     """Windows, Python 3.6+ (PEP 529): names are UTF-8 bytes."""
-    ppy.prnt('make_win_utf8_enc')
-    return BytesNaming('make_win_utf8_enc', PK_WIN_UTF8, 0, _argv_to_bytes)
+    ppy.prnt('make_PK_WIN_UTF8')
+    return BytesNaming(PK_WIN_UTF8, 0, _argv_to_bytes)
 
 
 def _choose_namingid():
@@ -429,31 +428,27 @@ def _choose_namingid():
     if enc is None:
         # Python 2.0-2.2: no way to ask; the Win32 core means code pages.
         if win32:
-            return 'make_win_clear_enc'
-        return 'make_clear_enc'
+            return PK_WIN_CODEPAGE
+        return PK_NATIVE_BYTES
     if enc == 'mbcs':
         # Python converts names through the ANSI code page: bytes API lossy.
         if _unicode_filenames_supported():
-            return 'make_utf16le_enc'
-        return 'make_win_clear_enc'
+            return PK_WIN_UTF16LE
+        return PK_WIN_CODEPAGE
     if win32 and _is_utf8_name(enc):
-        return 'make_win_utf8_enc'   # PEP 529, 3.6+
-    return 'make_clear_enc'
+        return PK_WIN_UTF8   # PEP 529, 3.6+
+    return PK_NATIVE_BYTES
 
 
 def make_naming(namingid):
-    if namingid == 'make_win_clear_enc':
-        return make_win_clear_enc()
-    if namingid == 'make_clear_enc':
-        return make_clear_enc()
-    if namingid == 'make_utf16le_enc':
-        return make_utf16le_enc()
-    if namingid == 'make_win_clear_enc':
-        return make_win_clear_enc()
-    if namingid == 'make_win_utf8_enc':
-        return make_win_utf8_enc()
-    if namingid == 'make_clear_enc':
-        return make_clear_enc()
+    if namingid == PK_WIN_CODEPAGE:
+        return make_PK_WIN_CODEPAGE()
+    if namingid == PK_NATIVE_BYTES:
+        return make_PK_NATIVE_BYTES()
+    if namingid == PK_WIN_UTF16LE:
+        return make_PK_WIN_UTF16LE()
+    if namingid == PK_WIN_UTF8:
+        return make_PK_WIN_UTF8()
     raise Exception('no such kind supported (%s)' % namingid)
 
 
