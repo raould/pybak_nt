@@ -1,19 +1,20 @@
 import portapy_sdk as ppy
 import sys
 import os
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import pk_types as pk
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import locale
 try:
-    #portapy_pragma ALLOW_MODULE
+    # portapy_pragma ALLOW_MODULE
     import socket
-    _gethostname = socket.gethostname  # type: ppy.PpyOptional[ppy.PpyCallable[[], str]]
-    #portapy_pragma ALLOW_MODULE_END socket
+    # type: ppy.PpyOptional[ppy.PpyCallable[[], str]]
+    _gethostname = socket.gethostname
+    # portapy_pragma ALLOW_MODULE_END socket
 except ImportError:
     _gethostname = None
 
-#----------------------------------------
+# ----------------------------------------
 # Filename strategy for pybak.
 
 """
@@ -39,7 +40,7 @@ logic the two share is in generic module functions (_listdir, ...).
 
   argv_to_os_path(arg)            -> [root]: a path list from one sys.argv entry.
   ascii_to_os_name(a)             -> a constant, comparable with names.
-  os_name_to_wire(name)           -> PkWireName: bytes to hexlify.
+  os_name_to_wire(name)           -> PkWireName: name to bytes (e.g. via string encoding).
   wire_to_os_name(raw)            -> the name again: exact inverse.
   listdir(path_list)              -> [name, ...] in a directory.
   child(path_list, name)          -> the path list one level down.
@@ -71,7 +72,8 @@ Python 2 carry '# type: ignore' with the reason.
 
 # Python 2's text type, or None on Python 3.
 try:
-    _UNICODE_TYPE = unicode  # type: ppy.PpyOptional[type]  # type: ignore[name-defined]
+    # type: ppy.PpyOptional[type]  # type: ignore[name-defined]
+    _UNICODE_TYPE = unicode
 except NameError:
     _UNICODE_TYPE = None
 
@@ -96,7 +98,9 @@ def _interpreter_name_codec():
     type and the bytes the OS API uses for names. It says nothing about the
     encoding of names on a particular disk. Returns None before Python 2.3.
     """
-    getter = getattr(sys, 'getfilesystemencoding', None)  # type: ppy.PpyOptional[ppy.PpyCallable[[], ppy.PpyOptional[str]]]
+    getter = getattr(sys, 'getfilesystemencoding',
+                     # type: ppy.PpyOptional[ppy.PpyCallable[[], ppy.PpyOptional[str]]]
+                     None)
     if getter is None:
         return None
     enc = getter()
@@ -131,7 +135,8 @@ def _is_utf8_name(enc):
 def _fs_encode_errors():
     # type: () -> ppy.PpyOptional[str]
     """How undecodable names are carried: 'surrogateescape' (POSIX) or 'surrogatepass' (Windows). 3.6+."""
-    getter = getattr(sys, 'getfilesystemencodeerrors', None)  # type: ppy.PpyOptional[ppy.PpyCallable[[], str]]
+    getter = getattr(sys, 'getfilesystemencodeerrors',
+                     None)  # type: ppy.PpyOptional[ppy.PpyCallable[[], str]]
     if getter is None:
         return None
     return getter()
@@ -142,7 +147,8 @@ def _locale_codec():
     """The locale's preferred encoding, without changing the locale (str.lower() on
     Python 2 depends on it). On Windows this names the actual code page, e.g. 'cp1252'."""
     try:
-        getter = getattr(locale, 'getpreferredencoding', None)  # type: ppy.PpyOptional[ppy.PpyCallable[[int], str]]  # 2.3+
+        # type: ppy.PpyOptional[ppy.PpyCallable[[int], str]]  # 2.3+
+        getter = getattr(locale, 'getpreferredencoding', None)
         if getter is not None:
             return getter(0)
         default = locale.getdefaultlocale()[1]
@@ -171,7 +177,8 @@ def _argv_to_bytes(arg):
     """Root as raw bytes. Python 2 argv is already bytes."""
     if ppy.PPY_NATIVE_STR_IS_BYTES:
         return arg  # type: ignore[return-value]  # Python 2: str is bytes
-    fsencode = getattr(os, 'fsencode', None)  # type: ppy.PpyOptional[ppy.PpyCallable[[str], bytes]]  # 3.2+
+    # type: ppy.PpyOptional[ppy.PpyCallable[[str], bytes]]  # 3.2+
+    fsencode = getattr(os, 'fsencode', None)
     if fsencode is not None:
         return fsencode(arg)
     enc = _interpreter_name_codec()
@@ -197,7 +204,8 @@ def _argv_to_text(arg):
     page have already become '?'. Refuse rather than walk the wrong path.
     """
     if _UNICODE_TYPE is not None and type(arg) == type(''):
-        text = _UNICODE_TYPE(arg, 'mbcs')  # type: ppy.PpyText  # Python 2 only: decode the code page
+        # type: ppy.PpyText  # Python 2 only: decode the code page
+        text = _UNICODE_TYPE(arg, 'mbcs')
         if _contains_question_mark(text):
             raise ValueError(
                 "root path contains '?': its real name was lost by the "
@@ -263,6 +271,7 @@ def _split_name(name, sep):
 
 class _NamingBase:   # no '()': empty parentheses are a syntax error before Python 2.5
     """What both strategies carry: their kind, and the facts about this client."""
+
     def __init__(self, kind, is_lossy):
         # type: (str, int) -> None
         self.kind = pk.PkNameKind(kind)
@@ -278,6 +287,7 @@ class _NamingBase:   # no '()': empty parentheses are a syntax error before Pyth
 
 class BytesNaming(_NamingBase):
     """Names are bytes: they are their own wire bytes."""
+
     def __init__(self, kind, is_lossy, argv_to_root_fn):
         # type: (str, int, ppy.PpyCallable[[pk.PkArgvStr], bytes]) -> None
         _NamingBase.__init__(self, kind, is_lossy)
@@ -322,6 +332,7 @@ class BytesNaming(_NamingBase):
 
 class TextNaming(_NamingBase):
     """Names are text from the Windows wide API; UTF-16LE code units on the wire."""
+
     def __init__(self, kind, argv_to_root_fn):
         # type: (str, ppy.PpyCallable[[pk.PkArgvStr], ppy.PpyText]) -> None
         _NamingBase.__init__(self, kind, 0)
@@ -339,9 +350,11 @@ class TextNaming(_NamingBase):
         # type: (ppy.PpyText) -> pk.PkWireName
         """UTF-16LE code units, lone surrogates kept."""
         try:
-            return pk.PkWireName(name.encode('utf-16-le', 'surrogatepass'))   # 3.1+
+            # 3.1+
+            return pk.PkWireName(name.encode('utf-16-le', 'surrogatepass'))
         except LookupError:
-            return pk.PkWireName(name.encode('utf-16-le'))   # Python 2 never rejects surrogates
+            # Python 2 never rejects surrogates
+            return pk.PkWireName(name.encode('utf-16-le'))
 
     def wire_to_os_name(self, raw):
         # type: (pk.PkWireName) -> ppy.PpyText
@@ -349,7 +362,8 @@ class TextNaming(_NamingBase):
         try:
             return raw.decode('utf-16-le', 'surrogatepass')   # 3.1+
         except LookupError:
-            return raw.decode('utf-16-le')   # Python 2 never rejects surrogates
+            # Python 2 never rejects surrogates
+            return raw.decode('utf-16-le')
 
     def listdir(self, path_list):
         # type: (pk.PkOsPath[ppy.PpyText]) -> pk.PkOsPath[ppy.PpyText]
@@ -374,9 +388,10 @@ class TextNaming(_NamingBase):
 
 MYPY = 0
 if MYPY:
-    #portapy_pragma ALLOW_MODULE
+    # portapy_pragma ALLOW_MODULE
     import typing
-    NamingChoice = typing.Union[BytesNaming, TextNaming]   # what choose_naming() returns: narrow it with isinstance
+    # what choose_naming() returns: narrow it with isinstance
+    NamingChoice = typing.Union[BytesNaming, TextNaming]
 
 
 def make_win_clear_enc():
@@ -385,11 +400,13 @@ def make_win_clear_enc():
     ppy.prnt('make_win_clear_enc')
     return BytesNaming(PK_WIN_CODEPAGE, 1, _argv_codepage_bytes)
 
+
 def make_clear_enc():
     # type: () -> BytesNaming
     """POSIX (and macOS), every Python: names are the filesystem's own bytes."""
     ppy.prnt('make_clear_enc')
     return BytesNaming(PK_NATIVE_BYTES, 0, _argv_to_bytes)
+
 
 def make_utf16le_enc():
     # type: () -> TextNaming
@@ -397,11 +414,13 @@ def make_utf16le_enc():
     ppy.prnt('make_utf16le_enc')
     return TextNaming(PK_WIN_UTF16LE, _argv_to_text)
 
+
 def make_win_utf8_enc():
     # type: () -> BytesNaming
     """Windows, Python 3.6+ (PEP 529): names are UTF-8 bytes."""
     ppy.prnt('make_win_utf8_enc')
     return BytesNaming(PK_WIN_UTF8, 0, _argv_to_bytes)
+
 
 def choose_naming():
     def _choose_naming():

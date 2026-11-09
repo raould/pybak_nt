@@ -19,19 +19,24 @@
 
 ## Marhsalling
 
-* We assume all dict keys are ascii, so when they go through bencoding they should be decoded to an ascii string (whatever 'string' is in the given python).
+Everything is super-hard-coded-bencoded end-to-end, "because Python
+2.0", and because becoding doesn't automagically round-trip native
+Python types.
 
-* Everything is hard-coded-bencoded end to end, "because Python 2.0", and because becoding doesn't automagically round-trip native Python types.
+The main problem is there's no simple way to round-trip strings. Because
+Python 2.x doesn't distinguish str vs. byte types, whereas Python 3.x does.
+That means entries in dicts transferred cannot be unmarshalled easily into
+the right type: all the 'str's that were put into a dict by Python 2.x look
+like binary values in Python 3.x. Even in Python 2.x when you have a str
+type you don't actually know if it is binary or text (in some encoding).
+The intent is totally lost.
 
-- we need to send
-- MANIFEST:
-  - all the file entries.
-  - metadata.
-- ENTRY:
-  - hexlized file path ([hex])
-  - md5 sum (hex)
-  - length (int)
-  - offset (int)
-  - name of the host (text)
-  - stat, lstat
-  - lots of text & int metadata
+For our use case end to end, that means we have to hard-codedly assume
+that everything (keys, values) is an ascii string, except for: the
+file path, things that are integers; md5 could go either way. (The
+file content data chunks are not going through marshalling.)
+
+This could be addressed by extending the becoding to support marking
+string-bytes vs. raw-bytes. Or by having an external schema, so the
+unmarshalling would know what to convert back into the local string
+type, vs. what to leave alone as bytes.
