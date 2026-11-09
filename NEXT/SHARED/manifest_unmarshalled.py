@@ -10,7 +10,6 @@ import naming
 
 
 def un_system_metadata(data):
-    ppy.prnt('un_system_metadata', data)
     un = {}
     un['name_kind'] = data['name_kind']
     un['fs_codec'] = data['fs_codec']
@@ -24,7 +23,6 @@ def un_system_metadata(data):
 
 
 def un_entry(data, N):
-    ppy.prnt('un_entry', data)
     e = {}
     e['md5'] = data['md5']
     e['length'] = data['length']

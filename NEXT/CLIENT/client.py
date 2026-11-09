@@ -387,7 +387,7 @@ def crawl_dir(root_path_list, root_key, allowed_devs, system_metadata, N):
                 pe = ppy.current_exception()
                 ppy.prntlog(ppy.PPY_ERROR, 'entry failed %r: %s' %
                             (N.os_join_path(entry_path_list), pe))
-        ppy.prnt('---', N.os_join_path(dir_path_list), cur_manifest.entries)
+        ppy.prnt('scanned', N.os_join_path(dir_path_list))
         if len(cur_manifest.entries) > 0:     # no request for directories without files
             sync_manifest(cur_manifest, N)
 
