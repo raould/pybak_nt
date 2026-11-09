@@ -61,22 +61,21 @@ def sync_one(hex_path_list, sender, offset, chunk_size, system_metadata, N):
 
 def server_request(manifest):
     data = manifest.marshall()
+    # ---------- TODO:
+    # body = http_client.post_data(
+    #     '0.0.0.0', 8000, '/query', data, _HTTP_TIMEOUT_SEC)
     # ---------- TESTING:
     un = mfu.ManifestUnmarshalled(data)
-    ppy.prnt(un)
-    return None
-    # ---------- TODO:
-    # type: (ppy.PpyBencoded) -> ppy.PpyBencoded
-    body = http_client.post_data(
-        '0.0.0.0', 8000, '/query', data, _HTTP_TIMEOUT_SEC)
-    wanted = ws.WantedSyncUnmarshalled(body)
-    for e in unmarsh.entries:
+    wanted = ws.WantedSync()
+    for e in un.entries:
         wanted.add_file(
             e['md5'],
             e['length'],
             0,
             e['hex_path']
         )
+    body = wanted.marshall()
+    wanted = ws.WantedSyncUnmarshalled(body)
     return wanted
 
 

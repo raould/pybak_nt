@@ -26,7 +26,7 @@ def un_entry(data, N):
     e = {}
     e['md5'] = data['md5']
     e['length'] = data['length']
-    e['os_path'] = util.from_wire_path_list(data['hex_path'], N)
+    e['hex_path'] = data['hex_path']
     e['lstat'] = data['lstat']
     e['stat'] = data['stat']
     return e

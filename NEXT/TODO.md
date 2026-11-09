@@ -2,6 +2,7 @@
 
 ## Extra Unresolved
 
+- the use of mypy quickly fell out of sync, it is borken now.
 - the os.listdir() bugs across all (python version) x (os) x (filesystem).
 
 ## Naming
