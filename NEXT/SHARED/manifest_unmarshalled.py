@@ -1,24 +1,17 @@
-"""Reading a manifest: what the client sends to the server's /sync, one per directory.
-
-Portable from Python 2.0 to 3.x, typed with type comments. The client builds
-manifests (CLIENT/client.py: manifest_header, Manifest); both ends read them
-with this, so the format is defined once.
-
-    {'bmetadata': {'name_kind': ..., 'fs_codec': ..., ...},     the header
-     'entries': [{'hexl_path': [hex, ...], 'md5': hex, 'length': n,
-                  'metadata': {'lstat': {...}, 'stat': {...}}}, ...]}
-"""
+"""Reading a manifest: what the client sends to the server's /sync, one per directory."""
 
 import portapy_sdk as ppy
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import pk_types as pk
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import util
+
 
 def _upsert_collating(collating, collid, k, v):
     if collid not in collating:
         collating[collid] = {}
     collating[collid][k] = v
+
 
 class ManifestUnmarshalled:
     def __init__(self, data):
@@ -42,7 +35,8 @@ class ManifestUnmarshalled:
                     collid = kp[0]
                     sk = kp[1]
                     mk = kp[2]
-                    _upsert_collating(collating, collid, '%s%s%s' % (sk, util.SEP, mk), v)
+                    _upsert_collating(collating, collid, '%s%s%s' %
+                                      (sk, util.SEP, mk), v)
                     pass
                 elif len(kp) == 2:
                     collid = kp[0]
