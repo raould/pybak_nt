@@ -44,7 +44,7 @@ class HttpError(Exception):
 
 
 def send_all(sock, data):
-    # type: (socket.socket, ppy.PpyBytes) -> None
+    # type: (socket.socket, benc.PpyBytes) -> None
     """sock.sendall where it exists, else a send() loop."""
     sendall = getattr(sock, 'sendall', None)
     if sendall is not None:
@@ -56,8 +56,8 @@ def send_all(sock, data):
 
 
 def recv_until_eof(sock):
-    # type: (socket.socket) -> ppy.PpyBytes
-    parts = []  # type: pk.PkList[ppy.PpyBytes]
+    # type: (socket.socket) -> benc.PpyBytes
+    parts = []  # type: pk.PkList[benc.PpyBytes]
     while 1:
         data = sock.recv(_HTTP_RECV_SIZE)
         if not data:
@@ -67,9 +67,9 @@ def recv_until_eof(sock):
 
 
 def build_request(host, port, method, path, body, content_type, xheaders):
-    # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyAsciiStr, ppy.PpyBytes, ppy.PpyAsciiStr) -> ppy.PpyBytes
+    # type: (benc.PpyAsciiStr, int, benc.PpyAsciiStr, benc.PpyAsciiStr, benc.PpyBytes, benc.PpyAsciiStr) -> benc.PpyBytes
     """Request head + body as bytes. host, method, path, content_type: ASCII native str."""
-    parts = []  # type: pk.PkList[ppy.PpyAsciiStr]
+    parts = []  # type: pk.PkList[benc.PpyAsciiStr]
     parts.append('%s %s HTTP/1.0\r\n' % (method, path))
     parts.append('Host: %s:%d\r\n' % (host, port))
     parts.append('Content-Type: %s\r\n' % content_type)
@@ -83,7 +83,7 @@ def build_request(host, port, method, path, body, content_type, xheaders):
 
 
 def parse_response(data):
-    # type: (ppy.PpyBytes) -> pk.PkHttpResponse
+    # type: (benc.PpyBytes) -> pk.PkHttpResponse
     """Raw response bytes -> {'status': int, 'headers': {lowercased bytes: bytes}, 'body': bytes}."""
     end = data.find(_HTTP_HEADER_END)
     if end < 0:
@@ -92,8 +92,8 @@ def parse_response(data):
     status_parts = lines[0].split(_HTTP_SPACE)
     if len(status_parts) < 2:
         raise HttpError("bad status line")
-    status = int(ppy.b2a(status_parts[1]))
-    headers = {}  # type: pk.PkDict[ppy.PpyBytes, ppy.PpyBytes]
+    status = int(benc.b2a(status_parts[1]))
+    headers = {}  # type: pk.PkDict[benc.PpyBytes, benc.PpyBytes]
     for line in lines[1:]:
         colon = line.find(_HTTP_COLON)
         if colon < 0:
@@ -105,7 +105,7 @@ def parse_response(data):
     body = data[end + len(_HTTP_HEADER_END):]
     content_length = headers.get(_HTTP_CONTENT_LENGTH)
     if content_length is not None:
-        length = int(ppy.b2a(content_length))
+        length = int(benc.b2a(content_length))
         if len(body) < length:
             raise HttpError("response cut off: %d of %d body bytes" %
                             (len(body), length))
@@ -114,7 +114,7 @@ def parse_response(data):
 
 
 def http_request(host, port, method, path, body, content_type, timeout_seconds, xheaders):
-    # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyAsciiStr, ppy.PpyBytes, ppy.PpyAsciiStr, int) -> pk.PkHttpResponse
+    # type: (benc.PpyAsciiStr, int, benc.PpyAsciiStr, benc.PpyAsciiStr, benc.PpyBytes, benc.PpyAsciiStr, int) -> pk.PkHttpResponse
     """One HTTP/1.0 request on a fresh connection. Raises HttpError or socket.error."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -139,19 +139,19 @@ def http_request(host, port, method, path, body, content_type, timeout_seconds, 
 
 
 def post_data(host, port, path, value, timeout_seconds, xheaders=None):
-    # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyBencoded, int) -> ppy.PpyBencoded
+    # type: (benc.PpyAsciiStr, int, benc.PpyAsciiStr, benc.PpyBencoded, int) -> benc.PpyBencoded
     """POST data, return the reply's body. Non-200 raises HttpError."""
     r = http_request(host, port, 'POST', path, value,
                      'application/x-bencode', timeout_seconds, xheaders)
     if r['status'] != 200:
         raise HttpError("HTTP %d from %s: %r" %
                         (r['status'], path, r['body'][:200]))
-    return ppy.PpyBencoded(r['body'])
+    return benc.PpyBencoded(r['body'])
 
 
 def post_data_bencoded(host, port, path, value, timeout_seconds, xheaders=None):
-    # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyBValue, int) -> ppy.PpyBValue
+    # type: (benc.PpyAsciiStr, int, benc.PpyAsciiStr, benc.PpyBValue, int) -> benc.PpyBValue
     """POST bencode(data), return the reply's bdecode(body). Non-200 raises HttpError."""
-    bv = ppy.bencode(value)
+    bv = benc.bencode(value)
     body = post_data(host, port, path, bv, timeout_seconds, xheaders)
-    return ppy.bdecode(body)
+    return benc.bdecode(body)

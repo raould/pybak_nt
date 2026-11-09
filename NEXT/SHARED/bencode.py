@@ -1,3 +1,4 @@
+import portapy_sdk as ppy
 
 # ---------------------------------------------------------------------------
 """bencode customized for pybak_nt, portable from Python 2.0 to 3.x.
@@ -285,7 +286,7 @@ def bencode(value):
     try:
         return PpyBencoded(_PPY_B_EMPTY.join(parts))
     except TypeError:
-        prntlog(PPY_ERROR, 'bencode ERROR %s' % str(parts))
+        ppy.prntlog(ppy.PPY_ERROR, 'bencode ERROR %s' % str(parts))
         raise
 
 
@@ -298,7 +299,7 @@ def _encode_into(value, parts):
     # before the Python 3 case of 'native string'.
     if t == _PPY_BYTES_TYPE:  # bytes, and Python 2 str.
         if not require_ascii_bytes(value):
-            prntlog(PPY_ERROR, '_encode_into ERROR: %s' % value)
+            ppy.prntlog(ppy.PPY_ERROR, '_encode_into ERROR: %s' % value)
             raise TypeError('only ascii bytes allowed.')
         # they are ascii bytes (hopefully not just by accident).
         parts.append(a2b('%d:' % len(value)))
@@ -326,8 +327,8 @@ def _encode_into(value, parts):
         try:
             keys.sort()
         except TypeError:
-            prntlog(PPY_ERROR, str(current_exception()))
-            prntlog(PPY_ERROR, keys)
+            ppy.prntlog(ppy.PPY_ERROR, str(ppy.current_exception()))
+            ppy.prntlog(ppy.PPY_ERROR, keys)
             raise
         parts.append(_PPY_B_D)
         for k in keys:
@@ -366,7 +367,7 @@ def bdecode(data):
 def _decode_at(data, pos):
     # type: (bytes, int) -> PpyTuple[PpyAny, int]
     c = data[pos:pos + 1]
-    prntlog(PPY_VERBOSE, '_decode_at: %s %s' % (pos, c))
+    ppy.prntlog(ppy.PPY_VERBOSE, '_decode_at: %s %s' % (pos, c))
     if c == _PPY_B_EMPTY:
         raise ValueError('unexpected end of data')
     if c == _PPY_B_I:
@@ -447,5 +448,6 @@ def _decode_bytes(data, pos):
     if end > len(data):
         raise ValueError('len(data) doesn\'t match expected length')
     result = (data[start:end], end)
-    prntlog(PPY_VERBOSE, '_decode_bytes: %s %s' % (data[pos:end], result))
+    ppy.prntlog(ppy.PPY_VERBOSE, '_decode_bytes: %s %s' %
+                (data[pos:end], result))
     return result

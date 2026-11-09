@@ -13,7 +13,7 @@ client's tests use.
   PYTHONPATH=$PORTAPY/src:../SHARED fastapi dev main.py
 
 Annotations are postponed (the __future__ import): the Ppy and Pk tags such as
-ppy.PpyBValue and pk.PkHexPath exist only for mypy, so an annotation evaluated
+benc.PpyBValue and pk.PkHexPath exist only for mypy, so an annotation evaluated
 when its 'def' runs would fail. Postponed, they are strings only mypy reads.
 """
 
@@ -28,8 +28,9 @@ import manifest_unmarshalled as mfu
 import wanted_sync as ws
 import server_util as su
 import util
+import bencode as benc
 
-BENCODE = 'application/x-bencode'
+BENCODE = 'application/x-pybak-bencode'  # our hacked bencoding.
 
 # ----------------------------------------
 # config
@@ -57,13 +58,13 @@ app = fa.FastAPI()
 # ----------------------------------------
 
 
-def bencode_response(value: ppy.PpyBValue, status_code: int) -> fa.Response:
-    return fa.Response(content=ppy.bencode(value), status_code=status_code, media_type=BENCODE)
+def bencode_response(value: benc.PpyBValue, status_code: int) -> fa.Response:
+    return fa.Response(content=benc.bencode(value), status_code=status_code, media_type=BENCODE)
 
 
 def error_response(message: str, status_code: int) -> fa.Response:
-    body: ppy.PpyBDict = {}
-    ppy.bd_add(body, 'error', message.encode('ascii', 'replace'))
+    body: benc.PpyBDict = {}
+    benc.bd_add(body, 'error', message.encode('ascii', 'replace'))
     return bencode_response(body, status_code)
 
 
@@ -88,7 +89,7 @@ def offset_wanted(md5, length, lstat, stat):
             return -1
         # we assume the md5 was already checked upon first completion.
         return -1
-    md5str = ppy.ascii_or_none(md5)  # string of 32 hex chars.
+    md5str = benc.ascii_or_none(md5)  # string of 32 hex chars.
     offset_wanted = helper(md5str, length, lstat, stat)
     ppy.prnt('offset_wanted', offset_wanted, md5)
     return offset_wanted
