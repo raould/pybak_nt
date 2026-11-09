@@ -27,18 +27,20 @@ import manifest_unmarshalled as mfu
 _PYB_CHUNK_SIZE = 1024*1024
 _HTTP_TIMEOUT_SEC = 10
 
+#
+# a new pybak client, for ('any' OS) x (any Python version 2.0+) x (common file systems).
+#
+
 # TODO: config / command line params for server address.
+# TODO: how to optimize the ux of retrying failed syncs?
 
 # The naming strategy is chosen once, in main, and passed to everything that
 # touches a name or path as N (pk.PkNamingP). Those functions are generic over
 # pk.PkOsName, so mypy checks them once for bytes names and once for text names.
 
-#
-# a new pybak client, for ('any' OS) x (any Python version 2.0+).
-#
 # notes:
 # - purposefully not calling os.path.split() for any paths.
-# - we are using bencode for marshalling, which is quite invasive, because
+# - we are using (a hacked) bencode for marshalling, which is quite invasive, because
 # we are painted into a corner by having to support Python 2.0 - Python 3.x.
 
 """----------------------------------------
@@ -52,29 +54,31 @@ crawl TODOs:
 
 
 def post_sender(hex_path_list, chunk, offset, system_metadata):
+    ppy.prnt('post_sender: TODO')
     pass
 
 
 def sync_one(hex_path_list, sender, offset, chunk_size, system_metadata, N):
+    ppy.prnt('sync_one: TODO')
     pass
 
 
 def server_request(manifest):
     data = manifest.marshall()
-    # ---------- TODO:
-    # body = http_client.post_data(
-    #     '0.0.0.0', 8000, '/query', data, _HTTP_TIMEOUT_SEC)
+    body = http_client.post_data(
+        '0.0.0.0', 8000, '/query', data, _HTTP_TIMEOUT_SEC
+    )
     # ---------- TESTING:
-    un = mfu.ManifestUnmarshalled(data)
-    wanted = ws.WantedSync()
-    for e in un.entries:
-        wanted.add_file(
-            e['md5'],
-            e['length'],
-            0,
-            e['hex_path']
-        )
-    body = wanted.marshall()
+    # un = mfu.ManifestUnmarshalled(data)
+    # wanted = ws.WantedSync()
+    # for e in un.entries:
+    #     wanted.add_file(
+    #         e['md5'],
+    #         e['length'],
+    #         0,
+    #         e['hex_path']
+    #     )
+    # body = wanted.marshall()
     wanted = ws.WantedSyncUnmarshalled(body)
     return wanted
 

@@ -9,7 +9,8 @@ import sys
 import binascii
 # portapy_pragma ALLOW_MODULE
 import pk_types as pk
-
+# portapy_pragma ALLOW_MODULE
+import bencode as benc
 
 MANIFEST_SYSTEM_METADATA_KEY = 'system_metadata'
 MANIFEST_ENTRIES_KEY = 'entries'
@@ -44,14 +45,14 @@ def md5_and_length(fp, chunk_size=8192):
 
 
 def b2ha(b):
-    # type: (ppy.PpyBytes) -> pk.PkHexName
+    # type: (benc.PpyBytes) -> pk.PkHexName
     """hexlify() gives lowercase hex digits: ASCII bytes, so a PkHexName."""
-    return pk.PkHexName(ppy.PpyAsciiBytes(binascii.hexlify(b)))
+    return pk.PkHexName(benc.PpyAsciiBytes(binascii.hexlify(b)))
 
 
 def ha2b(h):
-    # type: (pk.PkHexName) -> ppy.PpyBytes
-    return ppy.PpyBytes(binascii.unhexlify(h))
+    # type: (pk.PkHexName) -> benc.PpyBytes
+    return benc.PpyBytes(binascii.unhexlify(h))
 
 # ----------------------------------------
 # our md5 invocation returns bytes, make it ascii hex.

@@ -1,12 +1,14 @@
 import portapy_sdk as ppy
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import socket
-#portapy_pragma ALLOW_MODULE
+# portapy_pragma ALLOW_MODULE
 import pk_types as pk
+# portapy_pragma ALLOW_MODULE
+import bencode as benc
 
-_PYB_CHUNK_SIZE=1024*1024
+_PYB_CHUNK_SIZE = 1024*1024
 
-#----------------------------------------
+# ----------------------------------------
 # http over socket, "because Python 2.0".
 
 """Minimal HTTP/1.0 client over raw sockets, portable from Python 2.0 to 3.x.
@@ -27,13 +29,13 @@ Timeouts need socket.settimeout (Python 2.3+). On older versions timeout_seconds
 is ignored and a dead server can block the client.
 """
 
-_HTTP_CRLF = ppy.a2b('\r\n')
-_HTTP_HEADER_END = ppy.a2b('\r\n\r\n')
-_HTTP_SPACE = ppy.a2b(' ')
-_HTTP_COLON = ppy.a2b(':')
-_HTTP_EMPTY = ppy.a2b('')
-_HTTP_CONTENT_LENGTH = ppy.a2b('content-length')
-_HTTP_TRANSFER_ENCODING = ppy.a2b('transfer-encoding')
+_HTTP_CRLF = benc.a2b('\r\n')
+_HTTP_HEADER_END = benc.a2b('\r\n\r\n')
+_HTTP_SPACE = benc.a2b(' ')
+_HTTP_COLON = benc.a2b(':')
+_HTTP_EMPTY = benc.a2b('')
+_HTTP_CONTENT_LENGTH = benc.a2b('content-length')
+_HTTP_TRANSFER_ENCODING = benc.a2b('transfer-encoding')
 _HTTP_RECV_SIZE = 65536
 
 
@@ -77,7 +79,7 @@ def build_request(host, port, method, path, body, content_type, xheaders):
             parts.append('%s: %s\r\n' % (xh[0], xh[1]))
     parts.append('Connection: close\r\n\r\n')
     head = ''.join(parts)
-    return ppy.a2b(head) + body
+    return benc.a2b(head) + body
 
 
 def parse_response(data):
@@ -105,7 +107,8 @@ def parse_response(data):
     if content_length is not None:
         length = int(ppy.b2a(content_length))
         if len(body) < length:
-            raise HttpError("response cut off: %d of %d body bytes" % (len(body), length))
+            raise HttpError("response cut off: %d of %d body bytes" %
+                            (len(body), length))
         body = body[:length]
     return {'status': status, 'headers': headers, 'body': body}
 
@@ -127,7 +130,7 @@ def http_request(host, port, method, path, body, content_type, timeout_seconds, 
             body,
             content_type,
             xheaders
-            )
+        )
         send_all(sock, request)
         data = recv_until_eof(sock)
     finally:
@@ -138,10 +141,13 @@ def http_request(host, port, method, path, body, content_type, timeout_seconds, 
 def post_data(host, port, path, value, timeout_seconds, xheaders=None):
     # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyBencoded, int) -> ppy.PpyBencoded
     """POST data, return the reply's body. Non-200 raises HttpError."""
-    r = http_request(host, port, 'POST', path, value, 'application/x-bencode', timeout_seconds, xheaders)
+    r = http_request(host, port, 'POST', path, value,
+                     'application/x-bencode', timeout_seconds, xheaders)
     if r['status'] != 200:
-        raise HttpError("HTTP %d from %s: %r" % (r['status'], path, r['body'][:200]))
+        raise HttpError("HTTP %d from %s: %r" %
+                        (r['status'], path, r['body'][:200]))
     return ppy.PpyBencoded(r['body'])
+
 
 def post_data_bencoded(host, port, path, value, timeout_seconds, xheaders=None):
     # type: (ppy.PpyAsciiStr, int, ppy.PpyAsciiStr, ppy.PpyBValue, int) -> ppy.PpyBValue

@@ -32,16 +32,18 @@ The path of a name, from the disk to the server and back:
 """
 
 import portapy_sdk as ppy
+# portapy_pragma ALLOW_MODULE
+import bencode as benc
 
 # ---------------------------------------------------------------------------
 # Checking constructors for the derived tags (the runtime side of the NewTypes).
 
-_HEX_DIGITS = ppy.a2b('0123456789abcdef')
+_HEX_DIGITS = benc.a2b('0123456789abcdef')
 
 
 def _require_bytes(b, what):
     # type: (object, str) -> None
-    if type(b) != ppy.PpyBytes:
+    if type(b) != benc.PpyBytes:
         raise TypeError("%s: expected bytes, got %s" % (what, type(b)))
 
 
@@ -59,7 +61,7 @@ def _require_hex(b, what):
 
 def _require_count(n, what):
     # type: (int, str) -> None
-    ppy.bv_int(n)
+    benc.bv_int(n)
     if n < 0:
         raise ValueError("%s: negative" % what)
 
@@ -77,9 +79,9 @@ def _check_hex_name(b):
 
 
 def _check_hex_path(names):
-    # type: (ppy.PpyList[bytes]) -> ppy.PpyList[bytes]
-    for n in ppy.bv_list(names):        # raises TypeError unless names is a list
-        _check_hex_name(ppy.bv_bytes(n))
+    # type: (benc.PpyList[bytes]) -> benc.PpyList[bytes]
+    for n in benc.bv_list(names):        # raises TypeError unless names is a list
+        _check_hex_name(benc.bv_bytes(n))
     return names
 
 
@@ -107,13 +109,13 @@ def _check_count(n):
 
 def _check_name_kind(s):
     # type: (str) -> str
-    ppy.require_ascii_str(s)
+    benc.require_ascii_str(s)
     return s
 
 
 MYPY = 0
 if MYPY:
-    #portapy_pragma ALLOW_MODULE
+    # portapy_pragma ALLOW_MODULE
     import typing
     import os
 
@@ -121,30 +123,48 @@ if MYPY:
     PkArgvStr = str     # one element of sys.argv: a PpyNativeStr
 
     # Names and paths on this machine (see the module docstring).
-    PkOsName = typing.TypeVar('PkOsName', bytes, str)                   # one name: bytes or text, the same for a whole run
-    PkOsPath = typing.List[PkOsName]                                    # [root, name, name, ...]: use as PkOsPath[PkOsName]
+    # one name: bytes or text, the same for a whole run
+    PkOsName = typing.TypeVar('PkOsName', bytes, str)
+    # [root, name, name, ...]: use as PkOsPath[PkOsName]
+    PkOsPath = typing.List[PkOsName]
 
     # Derived tags.
-    PkWireName = typing.NewType('PkWireName', bytes)                    # bytes of one PkOsName: UTF-16LE under win-utf16le, the OS's bytes otherwise
-    PkHexName = typing.NewType('PkHexName', ppy.PpyAsciiBytes)          # hexlify(PkWireName): lowercase hex digits
-    PkHexPath = typing.NewType('PkHexPath', typing.List[PkHexName])     # the hexl_path: one PkHexName per component, root first
-    PkMd5Digest = typing.NewType('PkMd5Digest', bytes)                  # 16 raw bytes from an md5 hasher
-    PkMd5Hex = typing.NewType('PkMd5Hex', PkHexName)                    # hexlify(PkMd5Digest): 32 lowercase hex digits
-    PkLength = typing.NewType('PkLength', int)                          # a file length in bytes
-    PkOffset = typing.NewType('PkOffset', int)                          # a byte offset into a file: distinct from PkLength
-    PkFileBytes = typing.NewType('PkFileBytes', bytes)                  # a chunk read from a file
-    PkNameKind = typing.NewType('PkNameKind', str)                      # 'native-bytes', 'win-utf8', 'win-utf16le', 'win-codepage'
+    # bytes of one PkOsName: UTF-16LE under win-utf16le, the OS's bytes otherwise
+    PkWireName = typing.NewType('PkWireName', bytes)
+    # hexlify(PkWireName): lowercase hex digits
+    PkHexName = typing.NewType('PkHexName', benc.PpyAsciiBytes)
+    # the hexl_path: one PkHexName per component, root first
+    PkHexPath = typing.NewType('PkHexPath', typing.List[PkHexName])
+    # 16 raw bytes from an md5 hasher
+    PkMd5Digest = typing.NewType('PkMd5Digest', bytes)
+    # hexlify(PkMd5Digest): 32 lowercase hex digits
+    PkMd5Hex = typing.NewType('PkMd5Hex', PkHexName)
+    # a file length in bytes
+    PkLength = typing.NewType('PkLength', int)
+    # a byte offset into a file: distinct from PkLength
+    PkOffset = typing.NewType('PkOffset', int)
+    # a chunk read from a file
+    PkFileBytes = typing.NewType('PkFileBytes', bytes)
+    # 'native-bytes', 'win-utf8', 'win-utf16le', 'win-codepage'
+    PkNameKind = typing.NewType('PkNameKind', str)
 
     # Record shapes: the client uses dicts as records. Call form, since the
     # class form needs annotation syntax, which Python 2.0 cannot parse.
     PkStat = os.stat_result
     PkDirKey = typing.Optional[typing.Tuple[int, int]]
-    PkEntryKind = typing.TypedDict('PkEntryKind', {'kind': str, 'lst': typing.Optional[PkStat], 'target': typing.Optional[PkStat], 'err': typing.Optional[int]})
-    PkClassification = typing.TypedDict('PkClassification', {'action': str, 'kind': str, 'lst': typing.Optional[PkStat], 'target': typing.Optional[PkStat], 'err': typing.Optional[int]})
-    PkOpened = typing.TypedDict('PkOpened', {'fp': typing.Any, 'st': typing.Optional[PkStat], 'state': typing.Optional[str], 'err': typing.Optional[int]})
-    PkFileMetadata = typing.TypedDict('PkFileMetadata', {'lstat': PkStat, 'stat': typing.Optional[PkStat]})   # 'stat' is None when it equals 'lstat'
-    PkHttpResponse = typing.TypedDict('PkHttpResponse', {'status': int, 'headers': typing.Dict[bytes, bytes], 'body': bytes})
-    PkSender = typing.Callable[[PkHexPath, PkFileBytes, PkOffset], None]  # sends one chunk: (hexl_path, chunk, offset of the chunk)
+    PkEntryKind = typing.TypedDict('PkEntryKind', {
+                                   'kind': str, 'lst': typing.Optional[PkStat], 'target': typing.Optional[PkStat], 'err': typing.Optional[int]})
+    PkClassification = typing.TypedDict('PkClassification', {
+                                        'action': str, 'kind': str, 'lst': typing.Optional[PkStat], 'target': typing.Optional[PkStat], 'err': typing.Optional[int]})
+    PkOpened = typing.TypedDict('PkOpened', {
+                                'fp': typing.Any, 'st': typing.Optional[PkStat], 'state': typing.Optional[str], 'err': typing.Optional[int]})
+    PkFileMetadata = typing.TypedDict('PkFileMetadata', {
+                                      # 'stat' is None when it equals 'lstat'
+                                      'lstat': PkStat, 'stat': typing.Optional[PkStat]})
+    PkHttpResponse = typing.TypedDict('PkHttpResponse', {
+                                      'status': int, 'headers': typing.Dict[bytes, bytes], 'body': bytes})
+    # sends one chunk: (hexl_path, chunk, offset of the chunk)
+    PkSender = typing.Callable[[PkHexPath, PkFileBytes, PkOffset], None]
 
     # What naming.BytesNaming and naming.TextNaming both provide, for code
     # written once for either. Class attributes give the types of the
@@ -164,27 +184,35 @@ if MYPY:
         def argv_to_os_path(self, arg):
             # type: (PkArgvStr) -> typing.List[PkOsName]
             pass
+
         def ascii_to_os_name(self, a):
             # type: (str) -> PkOsName
             pass
+
         def os_name_to_wire(self, name):
             # type: (PkOsName) -> PkWireName
             pass
+
         def wire_to_os_name(self, raw):
             # type: (PkWireName) -> PkOsName
             pass
+
         def listdir(self, path_list):
             # type: (typing.List[PkOsName]) -> typing.List[PkOsName]
             pass
+
         def child(self, path_list, name):
             # type: (typing.List[PkOsName], PkOsName) -> typing.List[PkOsName]
             pass
+
         def os_join_path(self, path_list):
             # type: (typing.List[PkOsName]) -> PkOsName
             pass
+
         def has_suffix(self, name, ascii_suffix):
             # type: (PkOsName, str) -> int
             pass
+
         def split_name(self, name, ascii_sep):
             # type: (PkOsName, str) -> typing.List[PkOsName]
             pass
@@ -205,7 +233,7 @@ if MYPY:
     PkCallable = typing.Callable[_GP, _GR]
     PkAny = typing.Any
 else:
-    PkArgvStr = ppy.PpyNativeStr
+    PkArgvStr = benc.PpyNativeStr
     PkWireName = _check_bytes
     PkHexName = _check_hex_name
     PkHexPath = _check_hex_path

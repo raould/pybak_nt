@@ -5,6 +5,8 @@ import traceback
 import client_util as cu
 # portapy_pragma ALLOW_MODULE
 import util
+# portapy_pragma ALLOW_MODULE
+import bencode as benc
 
 
 def system_metadata(N):  # todo: implement in metadata_unmarshall
@@ -134,7 +136,7 @@ class Manifest:
             util.MANIFEST_ENTRIES_KEY: self.entries
         }
         try:
-            return ppy.bencode(marsh)
+            return benc.bencode(marsh)
         except:
             ppy.prntlog(ppy.PPY_ERROR, str(marsh))
             traceback.print_exc()

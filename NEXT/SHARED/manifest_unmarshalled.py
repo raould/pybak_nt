@@ -7,6 +7,8 @@ import pk_types as pk
 import util
 # portapy_pragma ALLOW_MODULE
 import naming
+# portapy_pragma ALLOW_MODULE
+import bencode as benc
 
 
 def un_system_metadata(data):
@@ -35,7 +37,7 @@ def un_entry(data, N):
 class ManifestUnmarshalled:
     def __init__(self, data):
         # type: (ppy.PpyBencoded) -> None
-        unmarsh = ppy.bv_dict(ppy.bdecode(data))
+        unmarsh = benc.bv_dict(benc.bdecode(data))
 
         smd = unmarsh[util.MANIFEST_SYSTEM_METADATA_KEY]
         self.system_metadata = un_system_metadata(smd)

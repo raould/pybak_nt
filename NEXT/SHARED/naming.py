@@ -4,11 +4,13 @@ import os
 # portapy_pragma ALLOW_MODULE
 import pk_types as pk
 # portapy_pragma ALLOW_MODULE
+import bencode as benc
+# portapy_pragma ALLOW_MODULE
 import locale
 try:
     # portapy_pragma ALLOW_MODULE
     import socket
-    # type: ppy.PpyOptional[ppy.PpyCallable[[], str]]
+    # type: benc.PpyOptional[benc.PpyCallable[[], str]]
     _gethostname = socket.gethostname
     # portapy_pragma ALLOW_MODULE_END socket
 except ImportError:
@@ -72,7 +74,7 @@ Python 2 carry '# type: ignore' with the reason.
 
 # Python 2's text type, or None on Python 3.
 try:
-    # type: ppy.PpyOptional[type]  # type: ignore[name-defined]
+    # type: benc.PpyOptional[type]  # type: ignore[name-defined]
     _UNICODE_TYPE = unicode
 except NameError:
     _UNICODE_TYPE = None
@@ -88,7 +90,7 @@ PK_WIN_CODEPAGE = 'win-codepage'      # Windows names via ANSI code page: LOSSY
 #
 
 def _interpreter_name_codec():
-    # type: () -> ppy.PpyOptional[str]
+    # type: () -> benc.PpyOptional[str]
     """The codec this interpreter uses for ALL OS names, lowercased.
 
     This is sys.getfilesystemencoding(), whose Python name is possibly misleading:
@@ -99,7 +101,7 @@ def _interpreter_name_codec():
     encoding of names on a particular disk. Returns None before Python 2.3.
     """
     getter = getattr(sys, 'getfilesystemencoding',
-                     # type: ppy.PpyOptional[ppy.PpyCallable[[], ppy.PpyOptional[str]]]
+                     # type: benc.PpyOptional[benc.PpyCallable[[], benc.PpyOptional[str]]]
                      None)
     if getter is None:
         return None
@@ -126,28 +128,28 @@ def _unicode_filenames_supported():
 
 
 def _is_utf8_name(enc):
-    # type: (ppy.PpyOptional[str]) -> int
+    # type: (benc.PpyOptional[str]) -> int
     if enc == 'utf-8' or enc == 'utf8':
         return 1
     return 0
 
 
 def _fs_encode_errors():
-    # type: () -> ppy.PpyOptional[str]
+    # type: () -> benc.PpyOptional[str]
     """How undecodable names are carried: 'surrogateescape' (POSIX) or 'surrogatepass' (Windows). 3.6+."""
     getter = getattr(sys, 'getfilesystemencodeerrors',
-                     None)  # type: ppy.PpyOptional[ppy.PpyCallable[[], str]]
+                     None)  # type: benc.PpyOptional[benc.PpyCallable[[], str]]
     if getter is None:
         return None
     return getter()
 
 
 def _locale_codec():
-    # type: () -> ppy.PpyOptional[str]
+    # type: () -> benc.PpyOptional[str]
     """The locale's preferred encoding, without changing the locale (str.lower() on
     Python 2 depends on it). On Windows this names the actual code page, e.g. 'cp1252'."""
     try:
-        # type: ppy.PpyOptional[ppy.PpyCallable[[int], str]]  # 2.3+
+        # type: benc.PpyOptional[benc.PpyCallable[[int], str]]  # 2.3+
         getter = getattr(locale, 'getpreferredencoding', None)
         if getter is not None:
             return getter(0)
@@ -158,7 +160,7 @@ def _locale_codec():
 
 
 def _hostname():
-    # type: () -> ppy.PpyOptional[str]
+    # type: () -> benc.PpyOptional[str]
     if _gethostname is None:
         return None
     try:
@@ -175,9 +177,9 @@ def _hostname():
 def _argv_to_bytes(arg):
     # type: (pk.PkArgvStr) -> bytes
     """Root as raw bytes. Python 2 argv is already bytes."""
-    if ppy.PPY_NATIVE_STR_IS_BYTES:
+    if benc.PPY_NATIVE_STR_IS_BYTES:
         return arg  # type: ignore[return-value]  # Python 2: str is bytes
-    # type: ppy.PpyOptional[ppy.PpyCallable[[str], bytes]]  # 3.2+
+    # type: benc.PpyOptional[benc.PpyCallable[[str], bytes]]  # 3.2+
     fsencode = getattr(os, 'fsencode', None)
     if fsencode is not None:
         return fsencode(arg)
@@ -197,14 +199,14 @@ def _argv_codepage_bytes(arg):
 
 
 def _argv_to_text(arg):
-    # type: (pk.PkArgvStr) -> ppy.PpyText
+    # type: (pk.PkArgvStr) -> benc.PpyText
     """Root as text, for the UTF-16 strategy.
 
     Python 2 argv on Windows is code-page bytes: characters outside the code
     page have already become '?'. Refuse rather than walk the wrong path.
     """
     if _UNICODE_TYPE is not None and type(arg) == type(''):
-        # type: ppy.PpyText  # Python 2 only: decode the code page
+        # type: benc.PpyText  # Python 2 only: decode the code page
         text = _UNICODE_TYPE(arg, 'mbcs')
         if _contains_question_mark(text):
             raise ValueError(
@@ -216,7 +218,7 @@ def _argv_to_text(arg):
 
 
 def _contains_question_mark(text):
-    # type: (ppy.PpyText) -> int
+    # type: (benc.PpyText) -> int
     for c in text:
         if ord(c) == 63:
             return 1
@@ -224,11 +226,11 @@ def _contains_question_mark(text):
 
 
 def _ascii_to_text(a):
-    # type: (ppy.PpyAsciiStr) -> ppy.PpyText
+    # type: (benc.PpyAsciiStr) -> benc.PpyText
     """An ASCII constant as text, for the UTF-16 strategy."""
-    ppy.require_ascii_str(a)
+    benc.require_ascii_str(a)
     if _UNICODE_TYPE is not None:
-        text = _UNICODE_TYPE(a)  # type: ppy.PpyText  # Python 2 only: unicode
+        text = _UNICODE_TYPE(a)  # type: benc.PpyText  # Python 2 only: unicode
         return text
     return a                      # Python 3: str is already text
 
@@ -289,7 +291,7 @@ class BytesNaming(_NamingBase):
     """Names are bytes: they are their own wire bytes."""
 
     def __init__(self, kind, is_lossy, argv_to_root_fn):
-        # type: (str, int, ppy.PpyCallable[[pk.PkArgvStr], bytes]) -> None
+        # type: (str, int, benc.PpyCallable[[pk.PkArgvStr], bytes]) -> None
         _NamingBase.__init__(self, kind, is_lossy)
         self._argv_to_root = argv_to_root_fn
 
@@ -298,8 +300,8 @@ class BytesNaming(_NamingBase):
         return [self._argv_to_root(arg)]
 
     def ascii_to_os_name(self, a):
-        # type: (ppy.PpyAsciiStr) -> bytes
-        return ppy.a2b(a)
+        # type: (benc.PpyAsciiStr) -> bytes
+        return benc.a2b(a)
 
     def os_name_to_wire(self, name):
         # type: (bytes) -> pk.PkWireName
@@ -322,11 +324,11 @@ class BytesNaming(_NamingBase):
         return _os_join_path(path_list)
 
     def has_suffix(self, name, ascii_suffix):
-        # type: (bytes, ppy.PpyAsciiStr) -> int
+        # type: (bytes, benc.PpyAsciiStr) -> int
         return _has_suffix(name, self.ascii_to_os_name(ascii_suffix))
 
     def split_name(self, name, ascii_sep):
-        # type: (bytes, ppy.PpyAsciiStr) -> pk.PkList[bytes]
+        # type: (bytes, benc.PpyAsciiStr) -> pk.PkList[bytes]
         return _split_name(name, self.ascii_to_os_name(ascii_sep))
 
 
@@ -334,20 +336,20 @@ class TextNaming(_NamingBase):
     """Names are text from the Windows wide API; UTF-16LE code units on the wire."""
 
     def __init__(self, kind, argv_to_root_fn):
-        # type: (str, ppy.PpyCallable[[pk.PkArgvStr], ppy.PpyText]) -> None
+        # type: (str, benc.PpyCallable[[pk.PkArgvStr], benc.PpyText]) -> None
         _NamingBase.__init__(self, kind, 0)
         self._argv_to_root = argv_to_root_fn
 
     def argv_to_os_path(self, arg):
-        # type: (pk.PkArgvStr) -> pk.PkOsPath[ppy.PpyText]
+        # type: (pk.PkArgvStr) -> pk.PkOsPath[benc.PpyText]
         return [self._argv_to_root(arg)]
 
     def ascii_to_os_name(self, a):
-        # type: (ppy.PpyAsciiStr) -> ppy.PpyText
+        # type: (benc.PpyAsciiStr) -> benc.PpyText
         return _ascii_to_text(a)
 
     def os_name_to_wire(self, name):
-        # type: (ppy.PpyText) -> pk.PkWireName
+        # type: (benc.PpyText) -> pk.PkWireName
         """UTF-16LE code units, lone surrogates kept."""
         try:
             # 3.1+
@@ -357,7 +359,7 @@ class TextNaming(_NamingBase):
             return pk.PkWireName(name.encode('utf-16-le'))
 
     def wire_to_os_name(self, raw):
-        # type: (pk.PkWireName) -> ppy.PpyText
+        # type: (pk.PkWireName) -> benc.PpyText
         """Exact inverse of os_name_to_wire."""
         try:
             return raw.decode('utf-16-le', 'surrogatepass')   # 3.1+
@@ -366,23 +368,23 @@ class TextNaming(_NamingBase):
             return raw.decode('utf-16-le')
 
     def listdir(self, path_list):
-        # type: (pk.PkOsPath[ppy.PpyText]) -> pk.PkOsPath[ppy.PpyText]
+        # type: (pk.PkOsPath[benc.PpyText]) -> pk.PkOsPath[benc.PpyText]
         return _listdir(path_list)
 
     def child(self, path_list, name):
-        # type: (pk.PkOsPath[ppy.PpyText], ppy.PpyText) -> pk.PkOsPath[ppy.PpyText]
+        # type: (pk.PkOsPath[benc.PpyText], benc.PpyText) -> pk.PkOsPath[benc.PpyText]
         return _child(path_list, name)
 
     def os_join_path(self, path_list):
-        # type: (pk.PkOsPath[ppy.PpyText]) -> ppy.PpyText
+        # type: (pk.PkOsPath[benc.PpyText]) -> benc.PpyText
         return _os_join_path(path_list)
 
     def has_suffix(self, name, ascii_suffix):
-        # type: (ppy.PpyText, ppy.PpyAsciiStr) -> int
+        # type: (benc.PpyText, benc.PpyAsciiStr) -> int
         return _has_suffix(name, self.ascii_to_os_name(ascii_suffix))
 
     def split_name(self, name, ascii_sep):
-        # type: (ppy.PpyText, ppy.PpyAsciiStr) -> pk.PkList[ppy.PpyText]
+        # type: (benc.PpyText, benc.PpyAsciiStr) -> pk.PkList[benc.PpyText]
         return _split_name(name, self.ascii_to_os_name(ascii_sep))
 
 
