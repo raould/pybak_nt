@@ -2,7 +2,6 @@ import portapy_sdk as ppy
 import sys
 import os
 import stat
-import traceback
 # portapy_pragma ALLOW_MODULE
 import naming
 # portapy_pragma ALLOW_MODULE

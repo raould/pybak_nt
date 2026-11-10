@@ -12,7 +12,7 @@ run3:
 	PYTHONPATH=$(PYTHONPATH) python3 client.py /tmp/test
 
 .PHONY: check
-Check:
+check:
 	export PORTAPY=$(PORTAPY) && \
 	python3 $${PORTAPY}/scripts/checkall.py *.py ../SHARED/*.py
 
