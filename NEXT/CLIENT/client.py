@@ -30,7 +30,7 @@ _HTTP_TIMEOUT_SEC = 10
 # a new pybak client, for ('any' OS) x (any Python version 2.0+) x (common file systems).
 #
 
-# TODO: config / command line params for serverip address.
+# TODO: config / command line params for server_addr address.
 # TODO: how to optimize the ux of retrying failed syncs?
 
 # The naming strategy is chosen once, in main, and passed to everything that
@@ -62,33 +62,22 @@ def sync_one(hex_path_list, sender, offset, chunk_size, system_metadata, N):
     pass
 
 
-def server_request(manifest, serverip):
+def server_request(manifest, server_addr):
     data = manifest.marshall()
     body = http_client.post_data(
-        serverip, 8000, '/query', data, _HTTP_TIMEOUT_SEC
+        server_addr[0], server_addr[1], '/query', data, _HTTP_TIMEOUT_SEC
     )
-    # ---------- TESTING:
-    # un = mfu.ManifestUnmarshalled(data)
-    # wanted = ws.WantedSync()
-    # for e in un.entries:
-    #     wanted.add_file(
-    #         e['md5'],
-    #         e['length'],
-    #         0,
-    #         e['hex_path']
-    #     )
-    # body = wanted.marshall()
     wanted = ws.WantedSyncUnmarshalled(body)
     return wanted
 
 
-def sync_manifest(manifest, serverip, N):
+def sync_manifest(manifest, server_addr, N):
     # type: (Manifest, pk.PkArgvStr, pk.PkNamingP[pk.PkOsName]) -> None
     # 0) add metadata (hostname, sysinfo, os.*, etc.)
-    # 1) send manifest to the serverip.
+    # 1) send manifest to the server_addr.
     # 2) get back the 'wanted' list (subset of manifest).
-    # 3) for each wanted, send it (chunked, with seek) to the serverip.
-    wanted = server_request(manifest, serverip)
+    # 3) for each wanted, send it (chunked, with seek) to the server_addr.
+    wanted = server_request(manifest, server_addr)
     ppy.prnt('wanted', wanted.to_debug_str())
     for w in wanted.entries:
         ppy.prnt('w', w['offset'], w['hex_path'])
@@ -278,7 +267,7 @@ def decide(kind, relation, place):
 
 
 def classify_and_decide_T(path_list, allowed_devs, ancestors, N):
-    # type: (pk.PkOsPath[pk.PkOsName], pk.PkList[int], pk.PkList[pk.PkDirKey], pk.PkNamingP[pk.PkOsName]) -> pk.PkTuple[str, str, pk.PkOptional[pk.PkStat], pk.PkOptional[pk.PkStat], pk.PkOptional[int]]
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkList[int], pk.PkList[pk.PkDirKey], pk.PkNamingP[pk.PkOsName]) -> pk.PkArgvStr[str, str, pk.PkOptional[pk.PkStat], pk.PkOptional[pk.PkStat], pk.PkOptional[int]]
     """One call per entry: returns (action, kind, lstat, target_stat, errno).
     ancestors: the dir keys from the crawl root down to the directory that
     holds this entry (see the vocabulary), NOT the path names.
@@ -327,18 +316,18 @@ def is_still_dir(dir_path_list, expected, N):
     return now['kind'] == 'dir' and target is not None and cu.is_safe_stat(target, expected)
 
 
-def crawl_tree(root_path_list, serverip, N):
-    # type: (pk.PkOsPath[pk.PkOsName], pk.PkArgvStr, pk.PkNamingP[pk.PkOsName]) -> None
+def crawl_tree(root_path_list, server_addr, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkArgvStr[str, str], pk.PkNamingP[pk.PkOsName]) -> None
     allowed_devs = allowed_devs_for_roots([root_path_list], N)
     ppy.prnt('allowed_devs', allowed_devs)
     root_key = dir_key(os.stat(N.os_join_path(root_path_list)))
     system_metadata = mf.system_metadata(N)
     crawl_dir(root_path_list, [root_key],
-              allowed_devs, system_metadata, serverip, N)
+              allowed_devs, system_metadata, server_addr, N)
 
 
-def crawl_dir(root_path_list, root_key, allowed_devs, system_metadata, serverip, N):
-    # type: (pk.PkOsPath[pk.PkOsName], pk.PkDirKey, pk.PkList[int], ppy.PpyBDict, pk.PkArgvStr, pk.PkNamingP[pk.PkOsName]) -> None
+def crawl_dir(root_path_list, root_key, allowed_devs, system_metadata, server_addr, N):
+    # type: (pk.PkOsPath[pk.PkOsName], pk.PkDirKey, pk.PkList[int], ppy.PpyBDict, pk.PkArgvStr[str, str], pk.PkNamingP[pk.PkOsName]) -> None
     """Depth-first and iterative: a local stack of directories still to visit.
     Each loop lists one directory, syncs its files, and pushes its subdirectories.
     The stack is three parallel lists, pushed and popped together; the same index is one pending directory:
@@ -392,28 +381,28 @@ def crawl_dir(root_path_list, root_key, allowed_devs, system_metadata, serverip,
                             (N.os_join_path(entry_path_list), pe))
         ppy.prnt('scanned', N.os_join_path(dir_path_list))
         if len(cur_manifest.entries) > 0:     # no request for directories without files
-            sync_manifest(cur_manifest, serverip, N)
+            sync_manifest(cur_manifest, server_addr, N)
 
 # ----------------------------------------
 # (1) we have to obtain the names of paths + files, and know what their type is.
 
 
 def get_args():
-    # type: () -> pk.PkArgvStr
+    # type: () -> pk.PkList[str]
     ppy.prnt(','.join(sys.argv))
     if len(sys.argv) != 3:
-        raise Exception('usage: <directory to crawl> <serverip ip>')
+        raise Exception('usage: <directory to crawl> <server_addr ip>')
     return sys.argv[1:3]
 
 
-def run(root, serverip, N):
-    # type: (pk.PkArgvStr, pk.PkArgvStr, pk.PkNamingP[pk.PkOsName]) -> None
+def run(root, server_addr, N):
+    # type: (pk.PkArgvStr, pk.PkArgvStr[str, str], pk.PkNamingP[pk.PkOsName]) -> None
     start_path_list = N.argv_to_os_path(root)
     if not os.path.isdir(N.os_join_path(start_path_list)):
         sys.stderr.write('required argument: must be a directory\n')
         sys.exit(1)
     ppy.prnt('start_dir', N.os_join_path(start_path_list))
-    crawl_tree(start_path_list, serverip, N)
+    crawl_tree(start_path_list, server_addr, N)
 
 
 def main():
@@ -425,12 +414,17 @@ def main():
             "FAIL: unsupported due to lossy conversion issues inherent in Python+OS+FS, sorry.\n")
         sys.exit(1)
     args = get_args()
+    root = args[0]
+    server_parts = args[1].split(':')
+    if len(server_parts) == 1:
+        server_parts.append(util.DEFAULT_SERVER_PORT)
+    server_addr = (server_parts[0], server_parts[1])
     # The only place both name types appear. The branches look the same, but
     # mypy checks run() as text names in the first and as bytes in the second.
     if isinstance(N, naming.TextNaming):
-        run(args[0], args[1], N)
+        run(root, server_addr, N)
     else:
-        run(args[0], args[1], N)
+        run(root, server_addr, N)
 
 
 if __name__ == '__main__':

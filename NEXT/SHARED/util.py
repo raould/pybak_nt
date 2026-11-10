@@ -12,6 +12,7 @@ import pk_types as pk
 # portapy_pragma ALLOW_MODULE
 import bencode as benc
 
+DEFAULT_SERVER_PORT = 8666
 MANIFEST_SYSTEM_METADATA_KEY = 'system_metadata'
 MANIFEST_ENTRIES_KEY = 'entries'
 
