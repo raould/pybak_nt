@@ -69,12 +69,12 @@ def error_response(message: str, status_code: int) -> fa.Response:
 
 
 def offset_wanted(md5, length, lstat, stat):
-    def helper(md5str, length, lstat, stat):
+    def helper(md5, length, lstat, stat):
         """ return => 0 means yes, and start at that byte offset.
             retrn < 0 means no. """
-        filename = '%s_%s' % (md5str, length)
+        filename = '%s_%s' % (md5, length)
         assert lstat is not None
-        p = os.path.join(*su.get_data_path_list(md5str))
+        p = os.path.join(*su.get_data_path_list(md5))
         cpl = os.path.join(canonical, p, filename)
         ppy.prnt('offset_wanted', cpl)
         if not os.path.exists(cpl):
@@ -89,8 +89,7 @@ def offset_wanted(md5, length, lstat, stat):
             return -1
         # we assume the md5 was already checked upon first completion.
         return -1
-    md5str = benc.ascii_or_none(md5)  # string of 32 hex chars.
-    offset_wanted = helper(md5str, length, lstat, stat)
+    offset_wanted = helper(md5, length, lstat, stat)
     ppy.prnt('offset_wanted', offset_wanted, md5)
     return offset_wanted
 
@@ -107,6 +106,7 @@ def wanted_for(manifest: mfu.ManifestUnmarshalled) -> ws.WantedSync:
     for entry in manifest.entries:
         md5 = entry['md5']
         length = entry['length']
+        hex_path = entry['hex_path']
         lstat = entry['lstat']
         stat = entry['stat']  # could be None.
         ppy.prnt("wanted_for", md5, length)
@@ -118,7 +118,7 @@ def wanted_for(manifest: mfu.ManifestUnmarshalled) -> ws.WantedSync:
         )
         if (offset >= 0):
             # todo: update metadata on the files using decoded path.
-            wanted.add_file(md5, length, hexl_path, pk.PkOffset(offset))
+            wanted.add_file(md5, length, hex_path, pk.PkOffset(offset))
     return wanted
 
 

@@ -1,7 +1,8 @@
 import portapy_sdk as ppy
 # portapy_pragma ALLOW_MODULE
 import pk_types as pk
-import util
+# portapy_pragma ALLOW_MODULE
+import bencode as benc
 
 
 class WantedSync:
@@ -9,7 +10,7 @@ class WantedSync:
 
     def __init__(self):
         # type: () -> None
-        self.entries = []  # type: pk.PkList[ppy.PpyBDict]
+        self.entries = []
 
     def add_file(self, md5, length, offset, hex_path):
         e = {}
@@ -20,7 +21,7 @@ class WantedSync:
         self.entries.append(e)
 
     def marshall(self):
-        return ppy.bencode({'entries': self.entries})
+        return benc.bencode({'entries': self.entries})
 
     def to_debug_str(self):
         # type: () -> str
@@ -29,8 +30,7 @@ class WantedSync:
 
 class WantedSyncUnmarshalled:
     def __init__(self, data):
-        # type: (ppy.PpyBencoded) -> None
-        bd = ppy.bv_dict(ppy.bdecode(data))
+        bd = benc.bv_dict(benc.bdecode(data))
         self.entries = bd['entries']
 
     def to_debug_str(self):
