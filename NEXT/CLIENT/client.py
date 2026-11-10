@@ -52,14 +52,47 @@ crawl TODOs:
 # ----------------------------------------
 
 
-def post_sender(hex_path_list, chunk, offset, system_metadata):
-    ppy.prnt('post_sender: TODO')
-    pass
+def chunk_sender(path_list, chunk, offset, server_addr):
+    xheaders = [('offset', offset)]
+    # TODO:
+    # for bk in bmetadata:
+    #     xheaders.append((ppy.bunkey(bk), bmetadata[bk]))  # tuple
+    ppy.prnt('>>> sending', offset, len(chunk), path_list, xheaders)
+    body = http_client.post_data(
+        server_addr[0],
+        server_addr[1],
+        '/sync',
+        chunk,
+        _HTTP_TIMEOUT_SEC,
+        xheaders
+    )
 
 
-def sync_one(hex_path_list, sender, offset, chunk_size, system_metadata, N):
-    ppy.prnt('sync_one: TODO')
-    pass
+def sync_one(path_list, offset, sender, chunk_size, server_addr, N):
+    classified = classify_entry(path_list, N)
+    target = classified['target']
+    if (classified['kind'] != 'file' and classified['kind'] != 'link-file') or target is None:
+        ppy.prntlog(ppy.PPY_WARN, 'not a file any more, not sent: %r' %
+                    (N.os_join_path(path_list),))
+        return
+    opened = cu.open_for_read(path_list, target, N)
+    f = opened['fp']
+    if f is None:
+        ppy.prntlog(ppy.PPY_WARN, 'could not open, not sent: %r %s errno %s' % (
+            N.os_join_path(path_list), opened['state'], opened['err']))
+        return
+    pos = offset
+    try:
+        f.seek(offset)
+        while 1:
+            chunk = pk.PkFileBytes(f.read(chunk_size))
+            if not chunk:
+                break
+            # todo: include all metadata for server simplicity.
+            sender(path_list, chunk, pos, server_addr)
+            pos = pk.PkOffset(pos + len(chunk))
+    finally:
+        f.close()
 
 
 def server_request(manifest, server_addr):
@@ -80,13 +113,18 @@ def sync_manifest(manifest, server_addr, N):
     wanted = server_request(manifest, server_addr)
     ppy.prnt('wanted', wanted.to_debug_str())
     for w in wanted.entries:
-        ppy.prnt('w', w['offset'], w['hex_path'])
-        sync_one(w['hex_path'],
-                 post_sender,
-                 w['offset'],
-                 _PYB_CHUNK_SIZE,
-                 manifest.get_system_metadata(),
-                 N)
+        ppy.prnt('w', w['offset'], w['md5'])
+        me = manifest.get_entry(w['md5'], w['length'])
+        if me is None:
+            ppy.prntlog(ppy.PPY_WARN, 'no entry in the manifest for (%s, %s)' % (
+                w['md5'], w['length']))
+        else:
+            sync_one(util.from_wire_path_list(me['hex_path'], N),
+                     w['offset'],
+                     chunk_sender,
+                     _PYB_CHUNK_SIZE,
+                     server_addr,
+                     N)
 
 # ---------------------------------------------------------------------------
 

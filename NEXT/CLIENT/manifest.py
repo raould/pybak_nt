@@ -128,6 +128,12 @@ class Manifest:
             ppy.prntlog(ppy.PPY_ERROR, str(err))
             ppy.prntlog(ppy.PPY_ERROR, repr(N.os_join_path(path_list)))
 
+    def get_entry(self, md5, length):
+        for e in self.entries:
+            if e['md5'] == md5 and e['length'] == length:
+                return e
+        return None
+
     def marshall(self):
         # keep it just a 1-level-deep dict.
         marsh = {

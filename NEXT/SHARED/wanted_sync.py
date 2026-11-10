@@ -12,12 +12,11 @@ class WantedSync:
         # type: () -> None
         self.entries = []
 
-    def add_file(self, md5, length, offset, hex_path):
+    def add_file(self, md5, length, offset):
         e = {}
         e['md5'] = md5
         e['length'] = length
         e['offset'] = offset
-        e['hex_path'] = hex_path
         self.entries.append(e)
 
     def marshall(self):
