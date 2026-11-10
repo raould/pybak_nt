@@ -9,7 +9,7 @@ run3:
 	mkdir -p /tmp/test
 	cp -r . /tmp/test
 	echo "psync-o-pathics.com/browse" > /tmp/test/abrowse.txt
-	PYTHONPATH=$(PYTHONPATH) python3 client.py /tmp/test
+	PYTHONPATH=$(PYTHONPATH) python3 client.py /tmp/test 0.0.0.0
 
 .PHONY: check
 check:
