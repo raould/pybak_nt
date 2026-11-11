@@ -50,7 +50,7 @@ class Manifest:
     def spk(self, pre, key):
         return '%s%s%s' % (pre, util.SEP, key)
 
-    def add_stat_for_server(self, md, st):
+    def add_stat(self, md, st):
         """os.stat/lstat result -> dict, portable from Python 2.0 to 3.x."""
         md['mode'] = st[stat.ST_MODE]
         md['ino'] = st[stat.ST_INO]
@@ -80,15 +80,15 @@ class Manifest:
         if birth is not None:
             md['birthtime'] = int(birth)
 
-    def add_meta_stats_for_server(self, e, file_metadata):
+    def add_meta_stats(self, e, file_metadata):
         lsd = {}
-        self.add_stat_for_server(lsd, file_metadata['lstat'])
+        self.add_stat(lsd, file_metadata['lstat'])
         e['lstat'] = lsd
 
         st = file_metadata['stat']
         if st is not None:
             sd = {}
-            self.add_stat_for_server(sd, st)
+            self.add_stat(sd, st)
             e['stat'] = sd
 
     # "everything is a file" ha ha.
@@ -120,7 +120,7 @@ class Manifest:
             file_metadata = {'lstat': lst, 'stat': None}
             if lst != st:
                 file_metadata['stat'] = st
-            self.add_meta_stats_for_server(e, file_metadata)
+            self.add_meta_stats(e, file_metadata)
             self.entries.append(e)
         except (IOError, OSError):  # PermissionError
             traceback.print_exc()

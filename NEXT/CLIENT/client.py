@@ -54,11 +54,8 @@ crawl TODOs:
 
 def chunk_sender(path_list, chunk, offset, server_addr):
     xheaders = [('offset', offset)]
-    # TODO:
-    # for bk in bmetadata:
-    #     xheaders.append((ppy.bunkey(bk), bmetadata[bk]))  # tuple
     ppy.prnt('>>> sending', offset, len(chunk), path_list, xheaders)
-    body = http_client.post_data(
+    http_client.post_data(
         server_addr[0],
         server_addr[1],
         '/sync',
@@ -88,7 +85,6 @@ def sync_one(path_list, offset, sender, chunk_size, server_addr, N):
             chunk = pk.PkFileBytes(f.read(chunk_size))
             if not chunk:
                 break
-            # todo: include all metadata for server simplicity.
             sender(path_list, chunk, pos, server_addr)
             pos = pk.PkOffset(pos + len(chunk))
     finally:
